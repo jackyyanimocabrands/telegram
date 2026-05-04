@@ -73,6 +73,8 @@ export interface ManagedBotRow {
   webhook_set: boolean;
   profile_set: boolean;
   commands_set: boolean;
+  update_mode: string;
+  polling_offset: number;
   last_token_rotated: Date | null;
   created_at: Date;
   updated_at: Date;
@@ -86,6 +88,12 @@ export interface UserRow {
   username: string | null;
   photo_url: string | null;
   created_at: Date;
+  updated_at: Date;
+}
+
+export interface AppStateRow {
+  key: string;
+  value: string;
   updated_at: Date;
 }
 

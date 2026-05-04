@@ -6,76 +6,99 @@ import * as userQueries from '../db/queries/users.js';
 import * as webhookLogQueries from '../db/queries/webhook-log.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
+import { handleChildBotMessage, handleChildBotCallback } from './child-bot.js';
 import type { ManagedBotUpdated } from '../types/telegram.js';
+import type { BotRegistry } from './bot-registry.js';
 
-export async function handleManagedBotUpdated(
-  updateId: number,
-  managedBot: ManagedBotUpdated,
-): Promise<void> {
-  const { user, bot } = managedBot;
+export class ManagedBotService {
+  constructor(private readonly registry: BotRegistry) {}
 
-  logger.info({ updateId, userId: user.id, botId: bot.id, botUsername: bot.username }, 'handleManagedBotUpdated: start');
+  async handleManagedBotUpdated(
+    updateId: number,
+    managedBot: ManagedBotUpdated,
+  ): Promise<void> {
+    const { user, bot } = managedBot;
 
-  // Atomic dedup — INSERT ON CONFLICT DO NOTHING eliminates TOCTOU race
-  const logEntry = await webhookLogQueries.tryAcquireUpdate(bot.id, updateId, 'managed_bot_updated', managedBot);
-  if (!logEntry) {
-    logger.info({ updateId, botId: bot.id }, 'handleManagedBotUpdated: duplicate update, skipping');
-    return;
-  }
+    logger.info({ updateId, userId: user.id, botId: bot.id, botUsername: bot.username }, 'handleManagedBotUpdated: start');
 
-  const dbUser = await userQueries.findUserByTelegramId(user.id);
-  if (!dbUser) {
-    logger.error({ telegramId: user.id }, 'handleManagedBotUpdated: user not found in DB — cannot provision');
-    await webhookLogQueries.markFailed(logEntry.id, 'user_not_found');
-    return;
-  }
+    // Atomic dedup — INSERT ON CONFLICT DO NOTHING eliminates TOCTOU race
+    const logEntry = await webhookLogQueries.tryAcquireUpdate(bot.id, updateId, 'managed_bot_updated', managedBot);
+    if (!logEntry) {
+      logger.info({ updateId, botId: bot.id }, 'handleManagedBotUpdated: duplicate update, skipping');
+      return;
+    }
 
-  logger.debug({ updateId, botId: bot.id, dbUserId: dbUser.id }, 'handleManagedBotUpdated: user found, starting provisioning');
+    const dbUser = await userQueries.findUserByTelegramId(user.id);
+    if (!dbUser) {
+      logger.error({ telegramId: user.id }, 'handleManagedBotUpdated: user not found in DB — cannot provision');
+      await webhookLogQueries.markFailed(logEntry.id, 'user_not_found');
+      return;
+    }
 
-  try {
-    logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserting with PENDING status');
-    await managedBotQueries.upsertManagedBot({
-      botId: bot.id,
-      botUsername: bot.username,
-      ownerTelegramId: user.id,
-      ownerUserId: dbUser.id,
-      encryptedToken: Buffer.alloc(0),
-      tokenIv: Buffer.alloc(0),
-      tokenKeyVersion: 1,
-      status: 'PENDING',
-    });
-    logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserted with PENDING status');
+    logger.debug({ updateId, botId: bot.id, dbUserId: dbUser.id }, 'handleManagedBotUpdated: user found, starting provisioning');
 
-    // Rotate the token immediately — the stable token is never stored or exposed
-    const rotatedToken = await TelegramApiClient.replaceManagedBotToken(env.BOT_TOKEN, bot.id);
-    logger.info({ botId: bot.id }, 'handleManagedBotUpdated: rotated managed bot token');
+    try {
+      logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserting with PENDING status');
+      await managedBotQueries.upsertManagedBot({
+        botId: bot.id,
+        botUsername: bot.username,
+        ownerTelegramId: user.id,
+        ownerUserId: dbUser.id,
+        encryptedToken: Buffer.alloc(0),
+        tokenIv: Buffer.alloc(0),
+        tokenKeyVersion: 1,
+        status: 'PENDING',
+      });
+      logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserted with PENDING status');
 
-    const encrypted = encrypt(rotatedToken);
-    logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserting with PROVISIONING status');
-    await managedBotQueries.upsertManagedBot({
-      botId: bot.id,
-      botUsername: bot.username,
-      ownerTelegramId: user.id,
-      ownerUserId: dbUser.id,
-      encryptedToken: encrypted.ciphertext,
-      tokenIv: encrypted.iv,
-      tokenKeyVersion: encrypted.keyVersion,
-      status: 'PROVISIONING',
-    });
-    logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserted with PROVISIONING status');
+      // Rotate the token immediately — the stable token is never stored or exposed
+      const rotatedToken = await TelegramApiClient.replaceManagedBotToken(env.BOT_TOKEN, bot.id);
+      logger.info({ botId: bot.id }, 'handleManagedBotUpdated: rotated managed bot token');
 
-    await provisionChildBot(rotatedToken, bot.id, user.first_name);
+      const encrypted = encrypt(rotatedToken);
+      logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserting with PROVISIONING status');
+      await managedBotQueries.upsertManagedBot({
+        botId: bot.id,
+        botUsername: bot.username,
+        ownerTelegramId: user.id,
+        ownerUserId: dbUser.id,
+        encryptedToken: encrypted.ciphertext,
+        tokenIv: encrypted.iv,
+        tokenKeyVersion: encrypted.keyVersion,
+        status: 'PROVISIONING',
+      });
+      logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserted with PROVISIONING status');
 
-    // Single atomic write — status + all flags together
-    await managedBotQueries.activateManagedBot(bot.id);
+      // provisionChildBot now only sets profile + commands (registry handles transport)
+      await provisionChildBot(rotatedToken, bot.id, user.first_name);
 
-    await webhookLogQueries.markProcessed(logEntry.id);
-    logger.info({ botId: bot.id, botUsername: bot.username }, 'handleManagedBotUpdated: bot fully provisioned and ACTIVE');
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    logger.error({ err, botId: bot.id }, 'handleManagedBotUpdated: provisioning failed, setting DEACTIVATED');
-    await webhookLogQueries.markFailed(logEntry.id, errorMessage);
-    await managedBotQueries.updateManagedBotStatus(bot.id, 'DEACTIVATED');
-    logger.warn({ botId: bot.id }, 'handleManagedBotUpdated: bot set to DEACTIVATED');
+      const updateMode = env.MANAGER_UPDATE_MODE; // child bots inherit manager's update mode
+      // Single atomic write — status + all flags + update_mode together
+      await managedBotQueries.activateManagedBot(bot.id, updateMode);
+
+      // Register the newly provisioned bot with the registry
+      const childWebhookUrl = `${env.BASE_URL}/webhook/bot/${bot.id}`;
+      this.registry.registerBot({
+        botId: bot.id,
+        token: rotatedToken,
+        updateMode,
+        allowedUpdates: ['message', 'callback_query'],
+        webhookUrl: childWebhookUrl,
+        webhookSecret: env.CHILD_WEBHOOK_SECRET,
+        handler: async (update) => {
+          if (update.message) await handleChildBotMessage(bot.id, update.message);
+          else if (update.callback_query) await handleChildBotCallback(bot.id, update.callback_query);
+        },
+      });
+
+      await webhookLogQueries.markProcessed(logEntry.id);
+      logger.info({ botId: bot.id, botUsername: bot.username }, 'handleManagedBotUpdated: bot fully provisioned and ACTIVE');
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      logger.error({ err, botId: bot.id }, 'handleManagedBotUpdated: provisioning failed, setting DEACTIVATED');
+      await webhookLogQueries.markFailed(logEntry.id, errorMessage);
+      await managedBotQueries.updateManagedBotStatus(bot.id, 'DEACTIVATED');
+      logger.warn({ botId: bot.id }, 'handleManagedBotUpdated: bot set to DEACTIVATED');
+    }
   }
 }

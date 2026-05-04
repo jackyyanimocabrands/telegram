@@ -68,22 +68,35 @@ export async function updateManagedBotStatus(botId: number, status: ManagedBotSt
 }
 
 /** Atomic activation — sets status to ACTIVE and all provisioning flags in one write. */
-export async function activateManagedBot(botId: number): Promise<void> {
-  logger.debug({ botId }, 'activateManagedBot: setting ACTIVE with all flags');
-  await pool.query(
-    `UPDATE managed_bots
-     SET status = 'ACTIVE',
-         webhook_set = true,
-         profile_set = true,
-         commands_set = true,
-         updated_at = now()
-     WHERE bot_id = $1`,
-    [botId],
-  );
+export async function activateManagedBot(botId: number, updateMode?: string): Promise<void> {
+  logger.debug({ botId, updateMode }, 'activateManagedBot: setting ACTIVE with all flags');
+  if (updateMode) {
+    await pool.query(
+      `UPDATE managed_bots
+       SET status = 'ACTIVE',
+           webhook_set = true,
+           profile_set = true,
+           commands_set = true,
+           update_mode = $2,
+           updated_at = now()
+       WHERE bot_id = $1`,
+      [botId, updateMode],
+    );
+  } else {
+    await pool.query(
+      `UPDATE managed_bots
+       SET status = 'ACTIVE',
+           webhook_set = true,
+           profile_set = true,
+           commands_set = true,
+           updated_at = now()
+       WHERE bot_id = $1`,
+      [botId],
+    );
+  }
 }
 
-export async function updateManagedBotToken(
-  botId: number,
+export async function updateManagedBotToken(botId: number,
   encryptedToken: Buffer,
   tokenIv: Buffer,
   keyVersion: number,
@@ -95,5 +108,23 @@ export async function updateManagedBotToken(
          last_token_rotated = now(), updated_at = now()
      WHERE bot_id = $4`,
     [encryptedToken, tokenIv, keyVersion, botId],
+  );
+}
+
+/** Load all ACTIVE bots for registry startup. */
+export async function findAllActiveManagedBots(): Promise<ManagedBotRow[]> {
+  logger.debug('findAllActiveManagedBots');
+  const result = await pool.query<ManagedBotRow>(
+    "SELECT * FROM managed_bots WHERE status = 'ACTIVE'",
+  );
+  return result.rows;
+}
+
+/** Persist polling offset after processing an update. */
+export async function savePollingOffset(botId: number, offset: number): Promise<void> {
+  logger.debug({ botId, offset }, 'savePollingOffset');
+  await pool.query(
+    'UPDATE managed_bots SET polling_offset = $1, updated_at = now() WHERE bot_id = $2',
+    [offset, botId],
   );
 }

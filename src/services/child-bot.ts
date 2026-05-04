@@ -1,6 +1,5 @@
 import { TelegramApiClient } from './telegram-api.js';
 import { getDecryptedBotToken } from './token-store.js';
-import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import type { Message, CallbackQuery } from '../types/telegram.js';
 
@@ -9,12 +8,9 @@ export async function provisionChildBot(
   botId: number,
   ownerFirstName: string,
 ): Promise<void> {
-  logger.info({ botId, ownerFirstName }, 'provisionChildBot: start');
-  const webhookUrl = `${env.BASE_URL}/webhook/bot/${botId}`;
+  logger.info({ botId, ownerFirstName }, 'provisionChildBot: start (profile + commands only)');
 
-  await TelegramApiClient.setWebhook(token, webhookUrl, ['message', 'callback_query'], env.CHILD_WEBHOOK_SECRET);
-  logger.info({ botId, webhookUrl }, 'provisionChildBot: webhook set');
-
+  // NOTE: setWebhook is NOT called here — BotRegistry owns transport wiring.
   await TelegramApiClient.setMyName(token, `${ownerFirstName}'s AI Agent`);
   logger.debug({ botId }, 'provisionChildBot: name set');
 
@@ -37,7 +33,7 @@ export async function provisionChildBot(
   ]);
   logger.debug({ botId }, 'provisionChildBot: commands set');
 
-  logger.info({ botId }, 'provisionChildBot: complete (webhook + profile + commands)');
+  logger.info({ botId }, 'provisionChildBot: complete (profile + commands)');
 }
 
 export async function handleChildBotMessage(botId: number, message: Message): Promise<void> {

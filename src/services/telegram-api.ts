@@ -6,6 +6,7 @@ import type {
   TelegramUser,
   BotCommand,
   WebhookInfo,
+  Update,
 } from '../types/telegram.js';
 
 const BASE_URL = 'https://api.telegram.org';
@@ -138,5 +139,41 @@ export class TelegramApiClient {
       callback_query_id: callbackQueryId,
       text,
     });
+  }
+
+  static async getUpdates(
+    token: string,
+    offset: number,
+    timeout: number,
+    allowedUpdates: string[],
+    signal?: AbortSignal,
+  ): Promise<Update[]> {
+    logger.debug({ offset, timeout, allowedUpdates }, 'getUpdates: called');
+    const url = `${BASE_URL}/bot${token}/getUpdates`;
+    ensureIPv4();
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ offset, timeout, allowed_updates: allowedUpdates }),
+        signal,
+      });
+    } catch (err) {
+      if ((err as { name?: string }).name === 'AbortError') throw err;
+      logger.error({ err }, 'getUpdates: network error');
+      throw err;
+    }
+    const data = (await res.json()) as TelegramApiResponse<Update[]>;
+    if (!data.ok || data.result === undefined) {
+      logger.warn({ errorCode: data.error_code, description: data.description }, 'getUpdates: ok=false');
+      throw new TelegramApiError('getUpdates', data.error_code ?? res.status, data.description ?? 'Unknown error');
+    }
+    return data.result;
+  }
+
+  static async deleteWebhook(token: string): Promise<boolean> {
+    logger.debug('deleteWebhook: called');
+    return this.call<boolean>(token, 'deleteWebhook', { drop_pending_updates: false });
   }
 }

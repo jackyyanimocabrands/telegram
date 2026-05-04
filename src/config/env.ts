@@ -23,6 +23,9 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   BASE_URL: z.string().url('BASE_URL must be a valid URL'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  MANAGER_UPDATE_MODE: z.enum(['polling', 'webhook']).default(
+    process.env.NODE_ENV === 'development' ? 'polling' : 'webhook',
+  ),
 });
 
 export type Env = z.infer<typeof envSchema>;
