@@ -75,6 +75,7 @@ export interface ManagedBotRow {
   commands_set: boolean;
   update_mode: string;
   polling_offset: number;
+  webhook_secret: string | null;
   last_token_rotated: Date | null;
   created_at: Date;
   updated_at: Date;

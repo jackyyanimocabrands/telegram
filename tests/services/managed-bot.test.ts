@@ -15,6 +15,8 @@ describe('ManagedBotService', () => {
   let markProcessedStub: sinon.SinonStub;
   let markFailedStub: sinon.SinonStub;
   let findUserByTelegramIdStub: sinon.SinonStub;
+  let invalidateBotTokenCacheStub: sinon.SinonStub;
+  let invalidateBotWebhookSecretCacheStub: sinon.SinonStub;
   let mockRegistry: any;
 
   const mockUser = { id: 1, telegram_id: 99887766, first_name: 'Alice', last_name: null, username: 'alice', photo_url: null, created_at: new Date(), updated_at: new Date() };
@@ -35,6 +37,8 @@ describe('ManagedBotService', () => {
     markProcessedStub = sinon.stub().resolves();
     markFailedStub = sinon.stub().resolves();
     findUserByTelegramIdStub = sinon.stub().resolves(mockUser);
+    invalidateBotTokenCacheStub = sinon.stub();
+    invalidateBotWebhookSecretCacheStub = sinon.stub();
 
     mockRegistry = { registerBot: sinon.stub() };
 
@@ -48,7 +52,8 @@ describe('ManagedBotService', () => {
         createChildBotHandler: sinon.stub().returns(sinon.stub().resolves()),
       },
       '../../src/services/token-store.js': {
-        invalidateBotTokenCache: sinon.stub(),
+        invalidateBotTokenCache: invalidateBotTokenCacheStub,
+        invalidateBotWebhookSecretCache: invalidateBotWebhookSecretCacheStub,
       },
       '../../src/db/queries/managed-bots.js': {
         upsertManagedBot: upsertManagedBotStub,
@@ -131,4 +136,33 @@ describe('ManagedBotService', () => {
     expect(config.botId).to.equal(777);
     expect(config.updateMode).to.equal(process.env.MANAGER_UPDATE_MODE);
   });
+
+  // ── M-01: Per-bot webhook secret ──
+
+  it('M-01: upsertManagedBot called with a webhookSecret', async () => {
+    const service = new ManagedBotService(mockRegistry);
+    await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
+
+    const upsertArgs = upsertManagedBotStub.firstCall.args[0];
+    expect(upsertArgs).to.have.property('webhookSecret');
+    // Generated secret is 32 random bytes as hex = 64 chars
+    expect(upsertArgs.webhookSecret).to.be.a('string').with.lengthOf(64);
+  });
+
+  it('M-01: registerBot called with the same generated webhookSecret as upsert', async () => {
+    const service = new ManagedBotService(mockRegistry);
+    await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
+
+    const upsertArgs = upsertManagedBotStub.firstCall.args[0];
+    const registryConfig = mockRegistry.registerBot.firstCall.args[0];
+    expect(registryConfig.webhookSecret).to.equal(upsertArgs.webhookSecret);
+  });
+
+  it('M-01: invalidateBotWebhookSecretCache called after provisioning', async () => {
+    const service = new ManagedBotService(mockRegistry);
+    await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
+
+    expect(invalidateBotWebhookSecretCacheStub.calledWith(777)).to.be.true;
+  });
 });
+

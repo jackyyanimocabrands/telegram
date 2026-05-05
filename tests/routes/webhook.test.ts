@@ -4,12 +4,21 @@ import sinon from 'sinon';
 import express from 'express';
 import request from 'supertest';
 import { createWebhookRouter } from '../../src/routes/webhook.js';
+import { pool } from '../../src/db/client.js';
+import { webhookSecretCache } from '../../src/services/token-store.js';
 
 describe('webhook routes', () => {
   let dispatchStub: sinon.SinonStub;
   let app: express.Express;
+  let queryStub: sinon.SinonStub;
 
   beforeEach(() => {
+    // M-01: Clear per-bot webhook secret cache so tests are independent
+    webhookSecretCache.clear();
+    // M-01: verifyChildWebhookSecret now does a DB lookup for per-bot secret.
+    // Stub pool.query to return null webhook_secret so the fallback env var is used.
+    queryStub = sinon.stub(pool, 'query').resolves({ rows: [] });
+
     dispatchStub = sinon.stub().resolves();
     const mockRegistry = { dispatch: dispatchStub };
     app = express();
@@ -93,5 +102,26 @@ describe('webhook routes', () => {
         .send({ update_id: 1 });
       expect(res.status).to.equal(400);
     });
+
+    it('M-01: returns 200 for correct per-bot secret from DB', async () => {
+      const perBotSecret = 'a'.repeat(64);
+      queryStub.resolves({ rows: [{ webhook_secret: perBotSecret }] });
+      const res = await request(app)
+        .post('/webhook/bot/123')
+        .set('x-telegram-bot-api-secret-token', perBotSecret)
+        .send({ update_id: 1 });
+      expect(res.status).to.equal(200);
+    });
+
+    it('M-01: returns 403 when per-bot secret is set but wrong secret is provided', async () => {
+      const perBotSecret = 'a'.repeat(64);
+      queryStub.resolves({ rows: [{ webhook_secret: perBotSecret }] });
+      const res = await request(app)
+        .post('/webhook/bot/123')
+        .set('x-telegram-bot-api-secret-token', 'wrong-secret-not-matching-per-bot')
+        .send({ update_id: 1 });
+      expect(res.status).to.equal(403);
+    });
   });
 });
+

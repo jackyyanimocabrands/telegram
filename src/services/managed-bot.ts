@@ -4,9 +4,10 @@ import { provisionChildBot, createChildBotHandler } from './child-bot.js';
 import * as managedBotQueries from '../db/queries/managed-bots.js';
 import * as userQueries from '../db/queries/users.js';
 import * as webhookLogQueries from '../db/queries/webhook-log.js';
-import { invalidateBotTokenCache } from './token-store.js';
+import { invalidateBotTokenCache, invalidateBotWebhookSecretCache } from './token-store.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
+import { randomBytes } from 'node:crypto';
 import type { ManagedBotUpdated } from '../types/telegram.js';
 import type { BotRegistry } from './bot-registry.js';
 
@@ -49,6 +50,8 @@ export class ManagedBotService {
 
       // 3. First DB write — PROVISIONING status with the encrypted token already present.
       //    No window where the DB row has PENDING + empty token buffer.
+      // M-01: Generate a per-bot webhook secret so a leak is scoped to one bot.
+      const webhookSecret = randomBytes(32).toString('hex');
       logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserting with PROVISIONING status and encrypted token');
       await managedBotQueries.upsertManagedBot({
         botId: bot.id,
@@ -59,11 +62,14 @@ export class ManagedBotService {
         tokenIv: encrypted.iv,
         tokenKeyVersion: encrypted.keyVersion,
         status: 'PROVISIONING',
+        webhookSecret,
       });
       logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserted with PROVISIONING status');
 
       // Invalidate any stale token cache entry for this bot
       invalidateBotTokenCache(bot.id);
+      // M-01: Invalidate webhook secret cache so next request fetches the new secret from DB.
+      invalidateBotWebhookSecretCache(bot.id);
 
       // 4. Call Telegram APIs (setCommands, setMyName, etc.)
       // provisionChildBot now only sets profile + commands (registry handles transport)
@@ -81,7 +87,7 @@ export class ManagedBotService {
         updateMode,
         allowedUpdates: ['message', 'callback_query'],
         webhookUrl: childWebhookUrl,
-        webhookSecret: env.CHILD_WEBHOOK_SECRET,
+        webhookSecret,
         handler: createChildBotHandler(bot.id),
       });
 

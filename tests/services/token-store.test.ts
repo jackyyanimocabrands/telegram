@@ -3,7 +3,15 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { pool } from '../../src/db/client.js';
 import { encrypt } from '../../src/services/encryption.js';
-import { getDecryptedBotToken, invalidateBotTokenCache, tokenCache, CACHE_TTL_MS } from '../../src/services/token-store.js';
+import {
+  getDecryptedBotToken,
+  invalidateBotTokenCache,
+  tokenCache,
+  CACHE_TTL_MS,
+  getBotWebhookSecretCached,
+  invalidateBotWebhookSecretCache,
+  webhookSecretCache,
+} from '../../src/services/token-store.js';
 
 // We use the real encryption module to generate a valid DB row so that
 // getDecryptedBotToken can decrypt successfully (same approach as managed-bots.test.ts
@@ -29,8 +37,9 @@ describe('token-store', () => {
   const NOW = 1_000_000;
 
   beforeEach(() => {
-    // Clear the module-level cache before each test so tests are independent
+    // Clear the module-level caches before each test so tests are independent
     tokenCache.clear();
+    webhookSecretCache.clear();
     queryStub = sinon.stub(pool, 'query');
     nowStub = sinon.stub(Date, 'now').returns(NOW);
     // Default: pool returns a valid bot row with real encrypted token
@@ -38,6 +47,8 @@ describe('token-store', () => {
   });
 
   afterEach(() => sinon.restore());
+
+  // ── Token cache (existing tests) ──
 
   it('fetches from DB on first call and returns decrypted token', async () => {
     const token = await getDecryptedBotToken(42);
@@ -86,5 +97,52 @@ describe('token-store', () => {
     }
     expect(error).to.be.instanceOf(Error);
     expect(error!.message).to.include('99');
+  });
+
+  // ── M-01: Webhook secret cache ──
+
+  const BOT_SECRET = 'a'.repeat(64); // 64 hex chars = 32 bytes
+
+  it('getBotWebhookSecretCached: fetches from DB on first call', async () => {
+    queryStub.resolves({ rows: [{ webhook_secret: BOT_SECRET }] });
+    const secret = await getBotWebhookSecretCached(42);
+    expect(secret).to.equal(BOT_SECRET);
+    expect(queryStub.calledOnce).to.be.true;
+  });
+
+  it('getBotWebhookSecretCached: cache hit — second call does not query DB', async () => {
+    queryStub.resolves({ rows: [{ webhook_secret: BOT_SECRET }] });
+    await getBotWebhookSecretCached(42);
+    const callsBefore = queryStub.callCount;
+
+    const secret2 = await getBotWebhookSecretCached(42);
+    expect(secret2).to.equal(BOT_SECRET);
+    expect(queryStub.callCount).to.equal(callsBefore); // no additional DB call
+  });
+
+  it('getBotWebhookSecretCached: returns null when DB returns null, does not cache', async () => {
+    queryStub.resolves({ rows: [{ webhook_secret: null }] });
+    const secret = await getBotWebhookSecretCached(42);
+    expect(secret).to.be.null;
+    // No cache entry stored for null — next call must hit DB again
+    expect(webhookSecretCache.has(42)).to.be.false;
+  });
+
+  it('getBotWebhookSecretCached: returns null when bot not found in DB', async () => {
+    queryStub.resolves({ rows: [] });
+    const secret = await getBotWebhookSecretCached(99);
+    expect(secret).to.be.null;
+    expect(webhookSecretCache.has(99)).to.be.false;
+  });
+
+  it('invalidateBotWebhookSecretCache: causes next call to hit DB', async () => {
+    queryStub.resolves({ rows: [{ webhook_secret: BOT_SECRET }] });
+    await getBotWebhookSecretCached(42);
+    const callsBefore = queryStub.callCount;
+
+    invalidateBotWebhookSecretCache(42);
+
+    await getBotWebhookSecretCached(42);
+    expect(queryStub.callCount).to.equal(callsBefore + 1); // DB queried after invalidation
   });
 });

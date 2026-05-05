@@ -43,3 +43,37 @@ export async function getDecryptedBotToken(botId: number): Promise<string> {
   logger.debug({ botId }, 'getDecryptedBotToken: decrypted and cached successfully');
   return token;
 }
+
+// M-01: Per-bot webhook secret cache — same TTL pattern as token cache.
+export const webhookSecretCache = new Map<number, CacheEntry>();
+
+/**
+ * Invalidate a cached webhook secret entry. Call this after provisioning a bot
+ * so the new secret is fetched from DB on the next request.
+ */
+export function invalidateBotWebhookSecretCache(botId: number): void {
+  webhookSecretCache.delete(botId);
+  logger.debug({ botId }, 'invalidateBotWebhookSecretCache: cache entry removed');
+}
+
+/**
+ * Return the per-bot webhook secret, with 5-minute TTL caching.
+ * Returns null if the bot has no secret set (legacy / pre-migration rows).
+ */
+export async function getBotWebhookSecretCached(botId: number): Promise<string | null> {
+  const now = Date.now();
+  const cached = webhookSecretCache.get(botId);
+  if (cached && cached.expiresAt > now) {
+    logger.debug({ botId }, 'getBotWebhookSecretCached: cache hit');
+    return cached.token;
+  }
+
+  logger.debug({ botId }, 'getBotWebhookSecretCached: cache miss, querying DB');
+  const secret = await managedBotQueries.getBotWebhookSecret(botId);
+  if (secret !== null) {
+    webhookSecretCache.set(botId, { token: secret, expiresAt: now + CACHE_TTL_MS });
+  }
+  logger.debug({ botId, found: secret !== null }, 'getBotWebhookSecretCached: result');
+  return secret;
+}
+

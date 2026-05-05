@@ -12,11 +12,12 @@ export async function upsertManagedBot(data: {
   tokenIv: Buffer;
   tokenKeyVersion: number;
   status: ManagedBotStatus;
+  webhookSecret: string;
 }): Promise<ManagedBotRow> {
   logger.debug({ botId: data.botId, status: data.status, ownerTelegramId: data.ownerTelegramId }, 'upsertManagedBot');
   const result = await pool.query<ManagedBotRow>(
-    `INSERT INTO managed_bots (bot_id, bot_username, owner_telegram_id, owner_user_id, encrypted_token, token_iv, token_key_version, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO managed_bots (bot_id, bot_username, owner_telegram_id, owner_user_id, encrypted_token, token_iv, token_key_version, status, webhook_secret)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (bot_id)
      DO UPDATE SET
        bot_username       = EXCLUDED.bot_username,
@@ -26,10 +27,11 @@ export async function upsertManagedBot(data: {
        token_iv           = EXCLUDED.token_iv,
        token_key_version  = EXCLUDED.token_key_version,
        status             = EXCLUDED.status,
+       webhook_secret     = EXCLUDED.webhook_secret,
        updated_at         = now()
      WHERE managed_bots.owner_telegram_id = EXCLUDED.owner_telegram_id
      RETURNING *`,
-    [data.botId, data.botUsername ?? null, data.ownerTelegramId, data.ownerUserId, data.encryptedToken, data.tokenIv, data.tokenKeyVersion, data.status],
+    [data.botId, data.botUsername ?? null, data.ownerTelegramId, data.ownerUserId, data.encryptedToken, data.tokenIv, data.tokenKeyVersion, data.status, data.webhookSecret],
   );
 
   // M-09: If rowCount is 0, the row exists but belongs to a different owner — reject the upsert.
@@ -131,4 +133,17 @@ export async function savePollingOffset(botId: number, offset: number): Promise<
     'UPDATE managed_bots SET polling_offset = $1, updated_at = now() WHERE bot_id = $2',
     [offset, botId],
   );
+}
+
+/**
+ * Fetch the per-bot webhook secret for a given bot.
+ * Returns null if the bot is not found, not ACTIVE, or has no secret set.
+ */
+export async function getBotWebhookSecret(botId: number): Promise<string | null> {
+  logger.debug({ botId }, 'getBotWebhookSecret');
+  const result = await pool.query<{ webhook_secret: string | null }>(
+    "SELECT webhook_secret FROM managed_bots WHERE bot_id = $1 AND status = 'ACTIVE'",
+    [botId],
+  );
+  return result.rows[0]?.webhook_secret ?? null;
 }

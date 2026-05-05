@@ -37,10 +37,12 @@ export function createWebhookRouter(registry: BotRegistry): RouterType {
     },
   );
 
+  // M-01: botId is validated first, then the async secret check runs with the validated id.
+  // verifyChildWebhookSecret reads req.params.botId directly (available from the route pattern).
+  // Express 5 propagates rejected async middleware promises to the error handler automatically.
   router.post(
     '/bot/:botId',
-    verifyChildWebhookSecret,
-    async (req, res) => {
+    async (req, res, next) => {
       const rawBotId = req.params.botId;
       const botId = parseInt(Array.isArray(rawBotId) ? rawBotId[0]! : rawBotId!, 10);
 
@@ -49,6 +51,13 @@ export function createWebhookRouter(registry: BotRegistry): RouterType {
         res.sendStatus(400);
         return;
       }
+
+      // Run async secret verification — passes on valid secret, calls next(err) on failure.
+      await verifyChildWebhookSecret(req, res, next);
+    },
+    async (req, res) => {
+      const rawBotId = req.params.botId;
+      const botId = parseInt(Array.isArray(rawBotId) ? rawBotId[0]! : rawBotId!, 10);
 
       const parsed = UpdateSchema.safeParse(req.body);
       if (!parsed.success) {
