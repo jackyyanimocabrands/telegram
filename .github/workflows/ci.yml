@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 1: test
+  # Runs on every push and PR to any branch.
+  # Installs deps, compiles TypeScript, runs the test suite.
+  # ──────────────────────────────────────────────────────────────────────────
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Set up Node 22 with pnpm store caching.
+      # The cache key is keyed on pnpm-lock.yaml so it invalidates exactly
+      # when dependencies change — nothing more, nothing less.
+      - name: Setup Node.js 22 with pnpm cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install pnpm via corepack
+        run: corepack enable && corepack prepare pnpm@10.11.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Compile TypeScript
+        run: pnpm build
+
+      - name: Run tests
+        run: pnpm test
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 2: build-and-push
+  # Runs ONLY on push to main, and only after the test job passes.
+  # Builds the Docker image and pushes two tags to Amazon ECR:
+  #   • latest
+  #   • <7-char git SHA>   (immutable, used by ECS task definitions)
+  # ──────────────────────────────────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push to ECR
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # AWS credentials are sourced from repository secrets.
+      # Required secrets:
+      #   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # Retrieves a short-lived ECR auth token and configures Docker to use it.
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Build once, tag with both `latest` and the short SHA.
+      # Short SHA (7 chars) provides an immutable pointer for rollbacks —
+      # `latest` is convenient but mutable and should never be used in task defs.
+      - name: Build, tag, and push image to ECR
+        env:
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          SHORT_SHA="${IMAGE_TAG:0:7}"
+
+          docker build \
+            -t "$ECR_REPOSITORY:latest" \
+            -t "$ECR_REPOSITORY:${SHORT_SHA}" \
+            .
+
+          docker push "$ECR_REPOSITORY:latest"
+          docker push "$ECR_REPOSITORY:${SHORT_SHA}"
+
+          echo "Pushed images:"
+          echo "  $ECR_REPOSITORY:latest"
+          echo "  $ECR_REPOSITORY:${SHORT_SHA}"

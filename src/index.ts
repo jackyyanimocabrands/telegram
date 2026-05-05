@@ -106,11 +106,15 @@ async function start(): Promise<void> {
       });
     }
 
+    // ── Health check — registered BEFORE auth middleware and rate limiters ──
+    // ECS / ALB probes hit /health; it must always be reachable, unauthenticated,
+    // and never subject to the apiLimiter applied to business routes below.
+    app.use(healthRouter);
+
     // Start the registry (wires all transports)
     await registry.start();
 
-    // Wire routes now that registry is ready
-    app.use(healthRouter);
+    // Wire remaining routes after the registry is ready
     app.use('/api/auth', authLimiter, authRouter);
     app.use('/api/bots', apiLimiter, botStatusRouter);
     app.use('/webhook', webhookLimiter, createWebhookRouter(registry));

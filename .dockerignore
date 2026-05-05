@@ -1,0 +1,21 @@
+# ── Build artifacts ──
+node_modules
+dist
+
+# ── Secrets & keys — never bake into an image ──
+.env
+.env.*
+*.pem
+
+# ── Version control ──
+.git
+.github
+
+# ── Test / coverage artifacts ──
+coverage
+*.log
+
+# ── Editor / OS noise ──
+.DS_Store
+.idea
+.vscode

@@ -1,0 +1,95 @@
+{
+  "_comment": "ECS Task Definition TEMPLATE — replace all <PLACEHOLDER> values before registering. Do NOT commit real ARNs or account IDs.",
+
+  "family": "animocamind-telegram-connector",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+
+  "cpu": "256",
+  "memory": "512",
+
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
+  "taskRoleArn":      "arn:aws:iam::<ACCOUNT_ID>:role/animocamind-telegram-connector-task-role",
+
+  "containerDefinitions": [
+    {
+      "name": "animocamind-telegram-connector",
+      "image": "<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/animocamind-telegram-connector:<IMAGE_TAG>",
+      "essential": true,
+
+      "portMappings": [
+        {
+          "containerPort": 3000,
+          "hostPort":      3000,
+          "protocol":      "tcp"
+        }
+      ],
+
+      "healthCheck": {
+        "command":     ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"],
+        "interval":    30,
+        "timeout":     5,
+        "startPeriod": 60,
+        "retries":     3
+      },
+
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group":         "/ecs/animocamind-telegram-connector",
+          "awslogs-region":        "<REGION>",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+
+      "_comment_secrets": "Secrets are injected by ECS at container start from AWS Secrets Manager. The task execution role must have secretsmanager:GetSecretValue on each ARN.",
+      "secrets": [
+        {
+          "name":      "BOT_TOKEN",
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:animocamind/telegram-connector/BOT_TOKEN"
+        },
+        {
+          "name":      "ENCRYPTION_MASTER_KEY",
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:animocamind/telegram-connector/ENCRYPTION_MASTER_KEY"
+        },
+        {
+          "name":      "ES256_PRIVATE_KEY",
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:animocamind/telegram-connector/ES256_PRIVATE_KEY"
+        },
+        {
+          "name":      "ES256_PUBLIC_KEY",
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:animocamind/telegram-connector/ES256_PUBLIC_KEY"
+        },
+        {
+          "name":      "DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:animocamind/telegram-connector/DATABASE_URL"
+        },
+        {
+          "name":      "WEBHOOK_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:animocamind/telegram-connector/WEBHOOK_SECRET"
+        },
+        {
+          "name":      "CHILD_WEBHOOK_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:animocamind/telegram-connector/CHILD_WEBHOOK_SECRET"
+        }
+      ],
+
+      "_comment_environment": "Non-sensitive configuration is passed as plain environment variables. Rotate secrets via Secrets Manager, not here.",
+      "environment": [
+        { "name": "NODE_ENV",             "value": "production" },
+        { "name": "PORT",                 "value": "3000" },
+        { "name": "HOST",                 "value": "0.0.0.0" },
+        { "name": "LOG_LEVEL",            "value": "info" },
+        { "name": "MANAGER_UPDATE_MODE",  "value": "webhook" },
+        { "name": "BOT_USERNAME",         "value": "<YOUR_BOT_USERNAME>" },
+        { "name": "BASE_URL",             "value": "https://<YOUR_DOMAIN>" },
+        { "name": "CORS_ORIGINS",         "value": "https://<YOUR_FRONTEND_DOMAIN>" },
+        { "name": "JWT_EXPIRES_IN",       "value": "2592000" },
+        { "name": "JWT_VERSION",          "value": "1" },
+        { "name": "ENCRYPTION_KEY_VERSION", "value": "1" }
+      ],
+
+      "stopTimeout": 30
+    }
+  ]
+}
