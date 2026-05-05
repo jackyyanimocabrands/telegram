@@ -36,6 +36,18 @@ export async function provisionChildBot(
   logger.info({ botId }, 'provisionChildBot: complete (profile + commands)');
 }
 
+/**
+ * Factory that returns a handler closure pre-bound to the given botId.
+ * Use this when registering a bot with BotRegistry to avoid repeating
+ * the inline dispatch arrow function at every call site.
+ */
+export function createChildBotHandler(botId: number) {
+  return async (update: { message?: Message; callback_query?: CallbackQuery }): Promise<void> => {
+    if (update.message) await handleChildBotMessage(botId, update.message);
+    else if (update.callback_query) await handleChildBotCallback(botId, update.callback_query);
+  };
+}
+
 export async function handleChildBotMessage(botId: number, message: Message): Promise<void> {
   const chatId = message.chat.id;
   const text = message.text ?? '';

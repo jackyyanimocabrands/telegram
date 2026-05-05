@@ -1,5 +1,6 @@
 import { pool } from '../client.js';
 import { logger } from '../../utils/logger.js';
+import { ConflictError } from '../../utils/errors.js';
 import type { ManagedBotRow, ManagedBotStatus } from '../../types/api.js';
 
 export async function upsertManagedBot(data: {
@@ -26,9 +27,25 @@ export async function upsertManagedBot(data: {
        token_key_version  = EXCLUDED.token_key_version,
        status             = EXCLUDED.status,
        updated_at         = now()
+     WHERE managed_bots.owner_telegram_id = EXCLUDED.owner_telegram_id
      RETURNING *`,
     [data.botId, data.botUsername ?? null, data.ownerTelegramId, data.ownerUserId, data.encryptedToken, data.tokenIv, data.tokenKeyVersion, data.status],
   );
+
+  // M-09: If rowCount is 0, the row exists but belongs to a different owner — reject the upsert.
+  if ((result.rowCount ?? 0) === 0) {
+    const existing = await pool.query<{ owner_telegram_id: number }>(
+      'SELECT owner_telegram_id FROM managed_bots WHERE bot_id = $1',
+      [data.botId],
+    );
+    if (existing.rows.length > 0 && existing.rows[0]!.owner_telegram_id !== data.ownerTelegramId) {
+      throw new ConflictError('Bot is already registered to another user');
+    }
+    // If still 0 rows somehow, re-query and return (defensive path)
+    const refetch = await pool.query<ManagedBotRow>('SELECT * FROM managed_bots WHERE bot_id = $1', [data.botId]);
+    return refetch.rows[0]!;
+  }
+
   logger.debug({ botId: data.botId, status: data.status }, 'upsertManagedBot: done');
   return result.rows[0]!;
 }
@@ -70,30 +87,17 @@ export async function updateManagedBotStatus(botId: number, status: ManagedBotSt
 /** Atomic activation — sets status to ACTIVE and all provisioning flags in one write. */
 export async function activateManagedBot(botId: number, updateMode?: string): Promise<void> {
   logger.debug({ botId, updateMode }, 'activateManagedBot: setting ACTIVE with all flags');
-  if (updateMode) {
-    await pool.query(
-      `UPDATE managed_bots
-       SET status = 'ACTIVE',
-           webhook_set = true,
-           profile_set = true,
-           commands_set = true,
-           update_mode = $2,
-           updated_at = now()
-       WHERE bot_id = $1`,
-      [botId, updateMode],
-    );
-  } else {
-    await pool.query(
-      `UPDATE managed_bots
-       SET status = 'ACTIVE',
-           webhook_set = true,
-           profile_set = true,
-           commands_set = true,
-           updated_at = now()
-       WHERE bot_id = $1`,
-      [botId],
-    );
-  }
+  await pool.query(
+    `UPDATE managed_bots
+     SET status = 'ACTIVE',
+         webhook_set = true,
+         profile_set = true,
+         commands_set = true,
+         update_mode = COALESCE($2, update_mode),
+         updated_at = now()
+     WHERE bot_id = $1`,
+    [botId, updateMode ?? null],
+  );
 }
 
 export async function updateManagedBotToken(botId: number,

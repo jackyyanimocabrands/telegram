@@ -52,8 +52,8 @@ describe('verifyTelegramAuth', () => {
     expect(verifyTelegramAuth(data, BOT_TOKEN)).to.be.false;
   });
 
-  it('returns false when auth_date is in the future', () => {
-    const futureDate = String(Math.floor(Date.now() / 1000) + 60);
+  it('returns false when auth_date is in the future (beyond 60s clock-skew tolerance)', () => {
+    const futureDate = String(Math.floor(Date.now() / 1000) + 120);
     const data = makeValidAuthData({ auth_date: futureDate });
     expect(verifyTelegramAuth(data, BOT_TOKEN)).to.be.false;
   });

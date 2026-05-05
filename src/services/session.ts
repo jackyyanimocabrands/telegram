@@ -1,7 +1,10 @@
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
+import { AppError } from '../utils/errors.js';
 import type { AuthenticatedUser } from '../types/api.js';
+
+const APP_ISSUER = 'animocamind-telegram-connector';
 
 /**
  * Issue an ES256 access token with a global version claim.
@@ -20,7 +23,7 @@ export function issueAccessToken(user: AuthenticatedUser): string {
     const token = jwt.sign(payload, env.ES256_PRIVATE_KEY, {
       algorithm: 'ES256',
       expiresIn: env.JWT_EXPIRES_IN,
-      issuer: 'animocamind-telegram-connector',
+      issuer: APP_ISSUER,
     });
     logger.debug({ userId: user.id }, 'issueAccessToken: signed successfully');
     return token;
@@ -38,7 +41,7 @@ export function verifyAccessToken(token: string): AuthenticatedUser {
   try {
     const decoded = jwt.verify(token, env.ES256_PUBLIC_KEY, {
       algorithms: ['ES256'],
-      issuer: 'animocamind-telegram-connector',
+      issuer: APP_ISSUER,
     }) as jwt.JwtPayload;
 
     if (decoded.ver !== env.JWT_VERSION) {
@@ -46,8 +49,14 @@ export function verifyAccessToken(token: string): AuthenticatedUser {
       throw new Error('Token version mismatch');
     }
 
+    // M-11: Guard against NaN/Infinity if `sub` is malformed
+    const id = parseInt(decoded.sub as string, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new AppError('Invalid token subject', 401, 'INVALID_TOKEN');
+    }
+
     const user: AuthenticatedUser = {
-      id: Number(decoded.sub),
+      id,
       telegramId: decoded.telegramId as number,
       firstName: decoded.firstName as string,
       username: decoded.username as string | undefined,

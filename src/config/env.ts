@@ -9,8 +9,8 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   BOT_TOKEN: z.string().min(1, 'BOT_TOKEN is required'),
   BOT_USERNAME: z.string().min(1, 'BOT_USERNAME is required').transform(v => v.replace(/^@/, '')),
-  WEBHOOK_SECRET: z.string().min(1, 'WEBHOOK_SECRET is required'),
-  CHILD_WEBHOOK_SECRET: z.string().min(1, 'CHILD_WEBHOOK_SECRET is required'),
+  WEBHOOK_SECRET: z.string().min(32).regex(/^[A-Za-z0-9_\-]+$/, 'WEBHOOK_SECRET must be at least 32 chars and contain only [A-Za-z0-9_-]'),
+  CHILD_WEBHOOK_SECRET: z.string().min(32).regex(/^[A-Za-z0-9_\-]+$/, 'CHILD_WEBHOOK_SECRET must be at least 32 chars and contain only [A-Za-z0-9_-]'),
   DATABASE_URL: z.string().url('DATABASE_URL must be a valid connection string'),
   ENCRYPTION_MASTER_KEY: z.string().regex(/^[0-9a-f]{64}$/, 'ENCRYPTION_MASTER_KEY must be 64 hex chars (32 bytes)'),
   ENCRYPTION_KEY_VERSION: z.coerce.number().int().positive().default(1),
@@ -23,9 +23,14 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   BASE_URL: z.string().url('BASE_URL must be a valid URL'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
-  MANAGER_UPDATE_MODE: z.enum(['polling', 'webhook']).default(
-    process.env.NODE_ENV === 'development' ? 'polling' : 'webhook',
-  ),
+  MANAGER_UPDATE_MODE: z.enum(['polling', 'webhook', 'auto'])
+    .default('auto')
+    .transform((val) => {
+      if (val === 'auto') {
+        return process.env.NODE_ENV === 'production' ? 'webhook' : 'polling';
+      }
+      return val;
+    }),
 });
 
 export type Env = z.infer<typeof envSchema>;

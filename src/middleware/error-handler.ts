@@ -13,9 +13,11 @@ export function errorHandler(
       { err, statusCode: err.statusCode, code: err.code, method: req.method, path: req.path, ip: req.ip },
       'Operational error',
     );
+    // Do not leak internal error details (e.g. Telegram method names) to HTTP clients.
+    const message = err.isClientFacing !== false ? err.message : 'An internal error occurred';
     res.status(err.statusCode).json({
       ok: false,
-      error: err.message,
+      error: message,
       code: err.code,
     });
     return;

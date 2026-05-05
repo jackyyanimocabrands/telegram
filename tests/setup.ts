@@ -4,8 +4,8 @@
 process.env.NODE_ENV = 'test';
 process.env.BOT_TOKEN = '123456:ABC-DEF_test_token';
 process.env.BOT_USERNAME = 'TestManagerBot';
-process.env.WEBHOOK_SECRET = 'test-webhook-secret-32-chars-long!!';
-process.env.CHILD_WEBHOOK_SECRET = 'child-webhook-secret-32-chars!!!';
+process.env.WEBHOOK_SECRET = 'test-webhook-secret-32-chars-long-ok';
+process.env.CHILD_WEBHOOK_SECRET = 'child-webhook-secret-32-chars-ok-x';
 process.env.DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/animocamind_connector_test';
 process.env.ENCRYPTION_MASTER_KEY = 'a'.repeat(64); // 64 hex chars = 32 bytes
 process.env.ENCRYPTION_KEY_VERSION = '1';

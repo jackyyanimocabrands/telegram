@@ -45,8 +45,10 @@ describe('ManagedBotService', () => {
       '../../src/services/encryption.js': { encrypt: encryptStub },
       '../../src/services/child-bot.js': {
         provisionChildBot: provisionChildBotStub,
-        handleChildBotMessage: sinon.stub().resolves(),
-        handleChildBotCallback: sinon.stub().resolves(),
+        createChildBotHandler: sinon.stub().returns(sinon.stub().resolves()),
+      },
+      '../../src/services/token-store.js': {
+        invalidateBotTokenCache: sinon.stub(),
       },
       '../../src/db/queries/managed-bots.js': {
         upsertManagedBot: upsertManagedBotStub,
@@ -115,12 +117,11 @@ describe('ManagedBotService', () => {
     expect(updateManagedBotStatusStub.calledWith(777, 'DEACTIVATED')).to.be.true;
   });
 
-  it('upserts twice — once PENDING, once PROVISIONING', async () => {
+  it('upserts once with PROVISIONING status', async () => {
     const service = new ManagedBotService(mockRegistry);
     await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
-    expect(upsertManagedBotStub.callCount).to.equal(2);
-    expect(upsertManagedBotStub.firstCall.args[0].status).to.equal('PENDING');
-    expect(upsertManagedBotStub.secondCall.args[0].status).to.equal('PROVISIONING');
+    expect(upsertManagedBotStub.callCount).to.equal(1);
+    expect(upsertManagedBotStub.firstCall.args[0].status).to.equal('PROVISIONING');
   });
 
   it('registers bot with correct botId and updateMode', async () => {

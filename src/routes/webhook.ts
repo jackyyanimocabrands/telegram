@@ -1,8 +1,18 @@
 import { Router, type Router as RouterType } from 'express';
+import { z } from 'zod';
 import { verifyManagerWebhookSecret, verifyChildWebhookSecret } from '../middleware/webhook-secret.js';
 import { logger } from '../utils/logger.js';
 import type { Update } from '../types/telegram.js';
 import type { BotRegistry } from '../services/bot-registry.js';
+
+/**
+ * Minimum shape required for a valid Telegram Update.
+ * .passthrough() preserves all additional fields so downstream handlers
+ * receive the full update object unmodified.
+ */
+const UpdateSchema = z.object({
+  update_id: z.number().int().positive(),
+}).passthrough();
 
 export function createWebhookRouter(registry: BotRegistry): RouterType {
   const router = Router();
@@ -11,7 +21,14 @@ export function createWebhookRouter(registry: BotRegistry): RouterType {
     '/telegram',
     verifyManagerWebhookSecret,
     async (req, res) => {
-      const update: Update = req.body;
+      const parsed = UpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        logger.warn({ issues: parsed.error.issues }, 'Manager webhook: malformed update body, ignoring');
+        // Return 200 to prevent Telegram from retrying a permanently malformed update
+        res.sendStatus(200);
+        return;
+      }
+      const update = parsed.data as Update;
       const updateTypes = Object.keys(update).filter(k => k !== 'update_id');
       logger.debug({ updateId: update.update_id, updateTypes }, 'Manager webhook received update');
       res.sendStatus(200);
@@ -26,13 +43,20 @@ export function createWebhookRouter(registry: BotRegistry): RouterType {
     async (req, res) => {
       const rawBotId = req.params.botId;
       const botId = parseInt(Array.isArray(rawBotId) ? rawBotId[0]! : rawBotId!, 10);
-      const update: Update = req.body;
 
-      if (Number.isNaN(botId)) {
+      if (!Number.isSafeInteger(botId) || botId <= 0) {
         logger.warn({ rawBotId }, 'Child webhook received invalid botId, rejecting');
         res.sendStatus(400);
         return;
       }
+
+      const parsed = UpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        logger.warn({ botId, issues: parsed.error.issues }, 'Child webhook: malformed update body, ignoring');
+        res.sendStatus(200);
+        return;
+      }
+      const update = parsed.data as Update;
 
       const updateTypes = Object.keys(update).filter(k => k !== 'update_id');
       logger.debug({ botId, updateId: update.update_id, updateTypes }, 'Child bot webhook received update');

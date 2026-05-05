@@ -5,7 +5,9 @@ import { logger } from '../utils/logger.js';
 const ALGORITHM = 'aes-256-gcm';
 const IV_BYTES = 12;
 const AUTH_TAG_BYTES = 16;
-const HKDF_SALT = Buffer.alloc(32); // fixed zero salt — master key is the secret
+// Named domain-separation salt — purpose is domain separation, not uniqueness.
+// ENCRYPTION_KEY_VERSION provides per-key versioning on top of this.
+const HKDF_SALT = Buffer.from('animocamind-telegram-connector-v1', 'utf8');
 
 /**
  * Derive a per-version AES-256 key using HKDF.

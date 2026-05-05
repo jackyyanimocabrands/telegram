@@ -50,7 +50,13 @@ authRouter.post<never, AuthResponse | { ok: false; error: string }, TelegramLogi
 
     const accessToken = issueAccessToken(authUser);
 
-    const suggestedUsername = `${data.username ?? data.first_name.toLowerCase()}_animoca_bot`;
+    // Sanitize username: Telegram usernames are [a-zA-Z0-9_], 5–32 chars.
+    // Strip anything outside that set before embedding in the deep-link URL.
+    const rawUsername = data.username ?? data.first_name.toLowerCase();
+    const safeUsername = rawUsername
+      .replace(/[^a-zA-Z0-9_]/g, '_')
+      .slice(0, 32);
+    const suggestedUsername = `${safeUsername}_animoca_bot`;
     const deepLink = `https://t.me/newbot/${env.BOT_USERNAME}/${suggestedUsername}?name=${encodeURIComponent(data.first_name + "'s AI Agent")}`;
 
     logger.debug({ userId: user.id, telegramId, deepLink }, 'Access token issued, sending auth response');

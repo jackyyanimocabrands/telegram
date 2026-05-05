@@ -25,6 +25,8 @@ interface BotEntry extends BotConfig {
 export class BotRegistry {
   private readonly bots: Map<number | 'manager', BotEntry> = new Map();
   private started = false;
+  // MI-07: Store the completion promise for each polling loop so stop() can await them.
+  private readonly pollingDone: Map<number | 'manager', Promise<void>> = new Map();
 
   /** Register a bot. If registry is already started, immediately wires up its transport. */
   registerBot(config: BotConfig): void {
@@ -48,23 +50,23 @@ export class BotRegistry {
     logger.info('BotRegistry: all bots wired');
   }
 
-  /** Stop all polling loops. Resolves once all loops have exited. */
+  /** Stop all polling loops. Resolves once all loops have exited (or after timeout). */
   async stop(): Promise<void> {
     logger.info('BotRegistry: stopping');
+    // MI-07: Signal all loops to stop via AbortController
     for (const entry of this.bots.values()) {
       if (entry.abortController) {
         entry.abortController.abort();
         logger.debug({ botId: entry.botId }, 'BotRegistry: aborted polling for bot');
       }
     }
-    // Give polling loops up to 2 seconds to drain
-    let waited = 0;
-    while (waited < 2000) {
-      const anyActive = Array.from(this.bots.values()).some(e => e.pollingActive);
-      if (!anyActive) break;
-      await new Promise(r => setTimeout(r, 100));
-      waited += 100;
-    }
+    // MI-07: Await all completion promises instead of busy-waiting.
+    // A 3-second safety timeout prevents hanging if a loop is stuck on a non-abortable call.
+    const drainTimeout = new Promise<void>(resolve => setTimeout(resolve, 3000));
+    await Promise.race([
+      Promise.allSettled([...this.pollingDone.values()]),
+      drainTimeout,
+    ]);
     logger.info('BotRegistry: stopped');
   }
 
@@ -125,7 +127,8 @@ export class BotRegistry {
 
     logger.info({ botId: entry.botId, offset }, 'BotRegistry: starting polling loop');
 
-    void (async () => {
+    // MI-07: Capture the loop's completion promise so stop() can await it.
+    const donePromise = (async () => {
       while (!ac.signal.aborted) {
         try {
           const updates = await TelegramApiClient.getUpdates(
@@ -136,6 +139,8 @@ export class BotRegistry {
             ac.signal,
           );
 
+          // M-04: Track whether the offset actually changed; only persist once after the batch.
+          let nextOffset = offset;
           for (const update of updates) {
             try {
               await entry.handler(update);
@@ -143,7 +148,12 @@ export class BotRegistry {
               logger.error({ err, botId: entry.botId, updateId: update.update_id }, 'BotRegistry: handler error for update');
             }
             // Advance offset regardless of handler success — prevents infinite retry of bad updates
-            offset = update.update_id + 1;
+            nextOffset = update.update_id + 1;
+          }
+
+          // M-04: Persist offset ONCE after the entire batch, not inside the loop.
+          if (nextOffset !== offset) {
+            offset = nextOffset;
             await this.persistOffset(entry.botId, offset);
           }
         } catch (err) {
@@ -158,6 +168,8 @@ export class BotRegistry {
       entry.pollingActive = false;
       logger.info({ botId: entry.botId }, 'BotRegistry: polling loop exited');
     })();
+
+    this.pollingDone.set(entry.botId, donePromise);
   }
 
   private async persistOffset(botId: number | 'manager', offset: number): Promise<void> {

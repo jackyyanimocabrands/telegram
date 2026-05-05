@@ -21,7 +21,7 @@ describe('webhook-secret middleware', () => {
 
   describe('verifyManagerWebhookSecret', () => {
     it('calls next() with no error for correct secret', () => {
-      const req = makeReq('test-webhook-secret-32-chars-long!!');
+      const req = makeReq('test-webhook-secret-32-chars-long-ok');
       verifyManagerWebhookSecret(req as Request, {} as Response, next);
       expect(next.calledOnce).to.be.true;
       expect(next.firstCall.args).to.deep.equal([]);
@@ -49,7 +49,7 @@ describe('webhook-secret middleware', () => {
 
   describe('verifyChildWebhookSecret', () => {
     it('calls next() with no error for correct child secret', () => {
-      const req = makeReq('child-webhook-secret-32-chars!!!', '123');
+      const req = makeReq('child-webhook-secret-32-chars-ok-x', '123');
       verifyChildWebhookSecret(req as Request, {} as Response, next);
       expect(next.calledOnce).to.be.true;
       expect(next.firstCall.args).to.deep.equal([]);

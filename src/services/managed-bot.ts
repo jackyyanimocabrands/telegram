@@ -1,12 +1,12 @@
 import { TelegramApiClient } from './telegram-api.js';
 import { encrypt } from './encryption.js';
-import { provisionChildBot } from './child-bot.js';
+import { provisionChildBot, createChildBotHandler } from './child-bot.js';
 import * as managedBotQueries from '../db/queries/managed-bots.js';
 import * as userQueries from '../db/queries/users.js';
 import * as webhookLogQueries from '../db/queries/webhook-log.js';
+import { invalidateBotTokenCache } from './token-store.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
-import { handleChildBotMessage, handleChildBotCallback } from './child-bot.js';
 import type { ManagedBotUpdated } from '../types/telegram.js';
 import type { BotRegistry } from './bot-registry.js';
 
@@ -38,25 +38,18 @@ export class ManagedBotService {
     logger.debug({ updateId, botId: bot.id, dbUserId: dbUser.id }, 'handleManagedBotUpdated: user found, starting provisioning');
 
     try {
-      logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserting with PENDING status');
-      await managedBotQueries.upsertManagedBot({
-        botId: bot.id,
-        botUsername: bot.username,
-        ownerTelegramId: user.id,
-        ownerUserId: dbUser.id,
-        encryptedToken: Buffer.alloc(0),
-        tokenIv: Buffer.alloc(0),
-        tokenKeyVersion: 1,
-        status: 'PENDING',
-      });
-      logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserted with PENDING status');
-
-      // Rotate the token immediately — the stable token is never stored or exposed
+      // C-02 Fix Part 1: Reorder writes so the first DB write already carries the encrypted token.
+      // 1. Rotate the token (Telegram API call — validate the bot exists)
       const rotatedToken = await TelegramApiClient.replaceManagedBotToken(env.BOT_TOKEN, bot.id);
       logger.info({ botId: bot.id }, 'handleManagedBotUpdated: rotated managed bot token');
 
+      // 2. Encrypt the token before touching the DB
       const encrypted = encrypt(rotatedToken);
-      logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserting with PROVISIONING status');
+      logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: encrypted rotated token');
+
+      // 3. First DB write — PROVISIONING status with the encrypted token already present.
+      //    No window where the DB row has PENDING + empty token buffer.
+      logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserting with PROVISIONING status and encrypted token');
       await managedBotQueries.upsertManagedBot({
         botId: bot.id,
         botUsername: bot.username,
@@ -69,11 +62,15 @@ export class ManagedBotService {
       });
       logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserted with PROVISIONING status');
 
+      // Invalidate any stale token cache entry for this bot
+      invalidateBotTokenCache(bot.id);
+
+      // 4. Call Telegram APIs (setCommands, setMyName, etc.)
       // provisionChildBot now only sets profile + commands (registry handles transport)
       await provisionChildBot(rotatedToken, bot.id, user.first_name);
 
       const updateMode = env.MANAGER_UPDATE_MODE; // child bots inherit manager's update mode
-      // Single atomic write — status + all flags + update_mode together
+      // 5. Single atomic write — status + all flags + update_mode together
       await managedBotQueries.activateManagedBot(bot.id, updateMode);
 
       // Register the newly provisioned bot with the registry
@@ -85,10 +82,7 @@ export class ManagedBotService {
         allowedUpdates: ['message', 'callback_query'],
         webhookUrl: childWebhookUrl,
         webhookSecret: env.CHILD_WEBHOOK_SECRET,
-        handler: async (update) => {
-          if (update.message) await handleChildBotMessage(bot.id, update.message);
-          else if (update.callback_query) await handleChildBotCallback(bot.id, update.callback_query);
-        },
+        handler: createChildBotHandler(bot.id),
       });
 
       await webhookLogQueries.markProcessed(logEntry.id);

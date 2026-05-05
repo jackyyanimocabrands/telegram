@@ -10,6 +10,7 @@ import {
   upsertManagedBot,
   updateManagedBotStatus,
 } from '../../../src/db/queries/managed-bots.js';
+import { ConflictError } from '../../../src/utils/errors.js';
 
 describe('managed-bots queries', () => {
   let queryStub: sinon.SinonStub;
@@ -93,7 +94,7 @@ describe('managed-bots queries', () => {
   describe('upsertManagedBot', () => {
     it('returns the upserted row', async () => {
       const row = { bot_id: 42, status: 'PENDING' };
-      queryStub.resolves({ rows: [row] });
+      queryStub.resolves({ rows: [row], rowCount: 1 });
       const result = await upsertManagedBot({
         botId: 42,
         ownerTelegramId: 1,

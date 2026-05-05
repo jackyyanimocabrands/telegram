@@ -2,6 +2,10 @@ import pg from 'pg';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
+// MI-11: Register BIGINT type parser — pg returns BIGINT (OID 20) as strings by default.
+// polling_offset is BIGINT; without this, parseInt on a string would silently produce NaN.
+pg.types.setTypeParser(20, (val: string) => parseInt(val, 10));
+
 const { Pool } = pg;
 
 export const pool = new Pool({

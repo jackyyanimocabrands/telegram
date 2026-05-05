@@ -27,7 +27,7 @@ describe('webhook routes', () => {
     it('returns 200 for correct webhook secret', async () => {
       const res = await request(app)
         .post('/webhook/telegram')
-        .set('x-telegram-bot-api-secret-token', 'test-webhook-secret-32-chars-long!!')
+        .set('x-telegram-bot-api-secret-token', 'test-webhook-secret-32-chars-long-ok')
         .send({ update_id: 1, message: { message_id: 1, chat: { id: 1, type: 'private' }, date: 1 } });
       expect(res.status).to.equal(200);
     });
@@ -36,7 +36,7 @@ describe('webhook routes', () => {
       const update = { update_id: 42, message: { message_id: 1, chat: { id: 1, type: 'private' }, date: 1 } };
       await request(app)
         .post('/webhook/telegram')
-        .set('x-telegram-bot-api-secret-token', 'test-webhook-secret-32-chars-long!!')
+        .set('x-telegram-bot-api-secret-token', 'test-webhook-secret-32-chars-long-ok')
         .send(update);
       // dispatch is fire-and-forget after 200; give it a tick
       await new Promise(r => setTimeout(r, 10));
@@ -63,7 +63,7 @@ describe('webhook routes', () => {
     it('returns 200 for correct child secret', async () => {
       const res = await request(app)
         .post('/webhook/bot/123')
-        .set('x-telegram-bot-api-secret-token', 'child-webhook-secret-32-chars!!!')
+        .set('x-telegram-bot-api-secret-token', 'child-webhook-secret-32-chars-ok-x')
         .send({ update_id: 1 });
       expect(res.status).to.equal(200);
     });
@@ -72,7 +72,7 @@ describe('webhook routes', () => {
       const update = { update_id: 7 };
       await request(app)
         .post('/webhook/bot/123')
-        .set('x-telegram-bot-api-secret-token', 'child-webhook-secret-32-chars!!!')
+        .set('x-telegram-bot-api-secret-token', 'child-webhook-secret-32-chars-ok-x')
         .send(update);
       await new Promise(r => setTimeout(r, 10));
       expect(dispatchStub.calledWith(123)).to.be.true;
@@ -89,7 +89,7 @@ describe('webhook routes', () => {
     it('returns 400 for non-numeric botId', async () => {
       const res = await request(app)
         .post('/webhook/bot/notanumber')
-        .set('x-telegram-bot-api-secret-token', 'child-webhook-secret-32-chars!!!')
+        .set('x-telegram-bot-api-secret-token', 'child-webhook-secret-32-chars-ok-x')
         .send({ update_id: 1 });
       expect(res.status).to.equal(400);
     });

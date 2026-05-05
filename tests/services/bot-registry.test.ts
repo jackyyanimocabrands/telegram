@@ -252,5 +252,78 @@ describe('BotRegistry', () => {
       expect(savePollingOffsetStub.calledWith(42, 56)).to.be.true;
       await registry.stop();
     });
+
+    it('M-04: savePollingOffset called exactly ONCE per batch regardless of batch size', async () => {
+      // Return a batch of 3 updates in the first call, then hang
+      const updates: Update[] = [
+        { update_id: 10 },
+        { update_id: 11 },
+        { update_id: 12 },
+      ];
+      let callCount = 0;
+      getUpdatesStub.callsFake(() => {
+        callCount++;
+        if (callCount === 1) return Promise.resolve(updates);
+        return new Promise(() => {}); // hang after first batch
+      });
+
+      const handler = sinon.stub().resolves();
+      const registry = new BotRegistry();
+      registry.registerBot({ botId: 77, token: 'tok', updateMode: 'polling', allowedUpdates: ['message'], handler });
+      await registry.start();
+      await new Promise(r => setTimeout(r, 100));
+
+      // Should be called exactly once after the batch, with the final offset (12 + 1 = 13)
+      expect(savePollingOffsetStub.callCount).to.equal(1);
+      expect(savePollingOffsetStub.firstCall.args).to.deep.equal([77, 13]);
+      await registry.stop();
+    });
+
+    it('M-04: savePollingOffset not called when batch is empty', async () => {
+      let callCount = 0;
+      getUpdatesStub.callsFake(() => {
+        callCount++;
+        if (callCount === 1) return Promise.resolve([]); // empty batch
+        return new Promise(() => {});
+      });
+
+      const registry = new BotRegistry();
+      registry.registerBot({ botId: 88, token: 'tok', updateMode: 'polling', allowedUpdates: [], handler: sinon.stub().resolves() });
+      await registry.start();
+      await new Promise(r => setTimeout(r, 100));
+      expect(savePollingOffsetStub.called).to.be.false;
+      await registry.stop();
+    });
+  });
+
+  describe('MI-07: Promise-based stop()', () => {
+    it('stop() resolves after polling loop exits (does not busy-wait)', async () => {
+      // Hang getUpdates until aborted
+      getUpdatesStub.callsFake((_tok: string, _off: number, _timeout: number, _allowed: string[], signal: AbortSignal) => {
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(Object.assign(new Error('AbortError'), { name: 'AbortError' })));
+        });
+      });
+
+      const registry = new BotRegistry();
+      registry.registerBot({ botId: 'manager', token: 'tok', updateMode: 'polling', allowedUpdates: [], handler: sinon.stub().resolves() });
+      await registry.start();
+      await new Promise(r => setTimeout(r, 30));
+
+      const t0 = Date.now();
+      await registry.stop();
+      const elapsed = Date.now() - t0;
+
+      // stop() should resolve quickly after abort — not wait 2000ms (old busy-wait max)
+      expect(elapsed).to.be.lessThan(1000);
+    });
+
+    it('stop() resolves cleanly with no polling bots', async () => {
+      const registry = new BotRegistry();
+      registry.registerBot({ botId: 1, token: 'tok', updateMode: 'webhook', allowedUpdates: [], handler: sinon.stub().resolves(), webhookUrl: 'http://x', webhookSecret: 's' });
+      await registry.start();
+      // No polling bots — should resolve immediately
+      await registry.stop();
+    });
   });
 });

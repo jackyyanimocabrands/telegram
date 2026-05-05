@@ -11,13 +11,16 @@ import type {
 
 const BASE_URL = 'https://api.telegram.org';
 
-// Force IPv4 once on first use — api.telegram.org does not respond on IPv6
+// Force IPv4 at module load — api.telegram.org does not respond on IPv6.
+// Called once here so a misconfiguration is caught at startup, not on first request.
+dns.setDefaultResultOrder('ipv4first');
+logger.debug('DNS default result order set to ipv4first');
+
+// Keep the guard so hot-reload / test environments that re-import don't double-log.
 let ipv4Configured = false;
 function ensureIPv4(): void {
   if (!ipv4Configured) {
-    dns.setDefaultResultOrder('ipv4first');
     ipv4Configured = true;
-    logger.debug('DNS default result order set to ipv4first');
   }
 }
 
@@ -147,8 +150,9 @@ export class TelegramApiClient {
     timeout: number,
     allowedUpdates: string[],
     signal?: AbortSignal,
+    limit = 100,
   ): Promise<Update[]> {
-    logger.debug({ offset, timeout, allowedUpdates }, 'getUpdates: called');
+    logger.debug({ offset, timeout, limit, allowedUpdates }, 'getUpdates: called');
     const url = `${BASE_URL}/bot${token}/getUpdates`;
     ensureIPv4();
     let res: Response;
@@ -156,7 +160,9 @@ export class TelegramApiClient {
       res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ offset, timeout, allowed_updates: allowedUpdates }),
+        // M-05: Explicitly pass both `limit` (max updates to return) and `timeout`
+        // (long-poll seconds) as separate fields — they are distinct Telegram API params.
+        body: JSON.stringify({ offset, limit, timeout, allowed_updates: allowedUpdates }),
         signal,
       });
     } catch (err) {

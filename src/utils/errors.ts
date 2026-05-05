@@ -2,6 +2,8 @@ export class AppError extends Error {
   public readonly statusCode: number;
   public readonly code: string;
   public readonly isOperational: boolean;
+  /** If false, the raw error message should not be surfaced to HTTP clients. */
+  public readonly isClientFacing: boolean = true;
 
   constructor(message: string, statusCode: number, code: string) {
     super(message);
@@ -46,6 +48,8 @@ export class ValidationError extends AppError {
 export class TelegramApiError extends AppError {
   public readonly telegramErrorCode: number;
   public readonly telegramDescription: string;
+  // Internal error — Telegram method names and API details must not be sent to clients.
+  public override readonly isClientFacing = false;
 
   constructor(method: string, errorCode: number, description: string) {
     super(`Telegram API error on ${method}: ${description}`, 502, 'TELEGRAM_API_ERROR');
