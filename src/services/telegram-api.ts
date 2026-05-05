@@ -16,14 +16,6 @@ const BASE_URL = 'https://api.telegram.org';
 dns.setDefaultResultOrder('ipv4first');
 logger.debug('DNS default result order set to ipv4first');
 
-// Keep the guard so hot-reload / test environments that re-import don't double-log.
-let ipv4Configured = false;
-function ensureIPv4(): void {
-  if (!ipv4Configured) {
-    ipv4Configured = true;
-  }
-}
-
 export class TelegramApiClient {
   private static async call<T>(
     token: string,
@@ -42,8 +34,6 @@ export class TelegramApiClient {
     }
 
     logger.debug({ method, hasBody: !!body }, 'Telegram API call: start');
-
-    ensureIPv4();
 
     let res: Response;
     try {
@@ -154,7 +144,6 @@ export class TelegramApiClient {
   ): Promise<Update[]> {
     logger.debug({ offset, timeout, limit, allowedUpdates }, 'getUpdates: called');
     const url = `${BASE_URL}/bot${token}/getUpdates`;
-    ensureIPv4();
     let res: Response;
     try {
       res = await fetch(url, {

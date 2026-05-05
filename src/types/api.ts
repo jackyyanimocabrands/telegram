@@ -71,13 +71,17 @@ export interface ManagedBotRow {
   encrypted_token: Buffer;
   token_iv: Buffer;
   token_key_version: number;
-  status: string;
+  status: ManagedBotStatus;
   webhook_set: boolean;
   profile_set: boolean;
   commands_set: boolean;
-  update_mode: string;
+  update_mode: 'polling' | 'webhook' | null;
   polling_offset: number;
-  webhook_secret: string | null;
+  // B-5: webhook_secret is now AES-256-GCM encrypted at rest (same pattern as encrypted_token).
+  // webhook_secret holds the ciphertext (BYTEA), with iv and key_version as companion columns.
+  webhook_secret: Buffer | null;
+  webhook_secret_iv: Buffer | null;
+  webhook_secret_key_version: number | null;
   last_token_rotated: Date | null;
   created_at: Date;
   updated_at: Date;

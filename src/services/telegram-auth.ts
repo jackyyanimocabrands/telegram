@@ -45,10 +45,6 @@ export function verifyTelegramAuth(data: TelegramAuthData, botToken: string): bo
   const ts = parseInt(authDate, 10);
   const ageSeconds = (Date.now() / 1000) - ts;
 
-  if (Number.isNaN(ts)) {
-    logger.warn({ telegramId: data.id }, 'verifyTelegramAuth: auth_date is NaN');
-    return false;
-  }
   // Allow up to 60 seconds in the future to tolerate clock skew; reject further
   if (ageSeconds < -60) {
     logger.warn({ telegramId: data.id, ageSeconds }, 'verifyTelegramAuth: auth_date is too far in the future');

@@ -1,6 +1,8 @@
 import { describe, it } from 'mocha';
 import { expect } from 'chai';
+import jwt from 'jsonwebtoken';
 import { issueAccessToken, verifyAccessToken } from '../../src/services/session.js';
+import { env } from '../../src/config/env.js';
 import type { AuthenticatedUser } from '../../src/types/api.js';
 
 const testUser: AuthenticatedUser = {
@@ -47,6 +49,28 @@ describe('session', () => {
       // Replace payload with garbage base64
       const tampered = [parts[0], Buffer.from('{"sub":9999}').toString('base64url'), parts[2]].join('.');
       expect(() => verifyAccessToken(tampered)).to.throw();
+    });
+
+    it('Fix-11: throws when telegramId is missing from the decoded payload', () => {
+      // Sign a valid token but omit the telegramId claim.
+      // B-2: Must include audience so verifyAccessToken does not reject it before reaching our check.
+      const tokenWithoutTelegramId = jwt.sign(
+        { sub: '1', firstName: 'Test', ver: env.JWT_VERSION },
+        env.ES256_PRIVATE_KEY,
+        { algorithm: 'ES256', expiresIn: 900, issuer: 'animocamind-telegram-connector', audience: 'animocamind-telegram-connector' },
+      );
+      expect(() => verifyAccessToken(tokenWithoutTelegramId)).to.throw();
+    });
+
+    it('Fix-11: throws when firstName is missing from the decoded payload', () => {
+      // Sign a valid token but omit the firstName claim.
+      // B-2: Must include audience so verifyAccessToken does not reject it before reaching our check.
+      const tokenWithoutFirstName = jwt.sign(
+        { sub: '1', telegramId: 99887766, ver: env.JWT_VERSION },
+        env.ES256_PRIVATE_KEY,
+        { algorithm: 'ES256', expiresIn: 900, issuer: 'animocamind-telegram-connector', audience: 'animocamind-telegram-connector' },
+      );
+      expect(() => verifyAccessToken(tokenWithoutFirstName)).to.throw();
     });
   });
 });

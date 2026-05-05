@@ -1,6 +1,6 @@
 import { pool } from '../client.js';
 import { logger } from '../../utils/logger.js';
-import { ConflictError } from '../../utils/errors.js';
+import { AppError, ConflictError } from '../../utils/errors.js';
 import type { ManagedBotRow, ManagedBotStatus } from '../../types/api.js';
 
 export async function upsertManagedBot(data: {
@@ -12,26 +12,31 @@ export async function upsertManagedBot(data: {
   tokenIv: Buffer;
   tokenKeyVersion: number;
   status: ManagedBotStatus;
-  webhookSecret: string;
+  // B-5: webhook_secret is now AES-256-GCM encrypted — store ciphertext + iv + key version.
+  webhookSecret: Buffer;
+  webhookSecretIv: Buffer;
+  webhookSecretKeyVersion: number;
 }): Promise<ManagedBotRow> {
   logger.debug({ botId: data.botId, status: data.status, ownerTelegramId: data.ownerTelegramId }, 'upsertManagedBot');
   const result = await pool.query<ManagedBotRow>(
-    `INSERT INTO managed_bots (bot_id, bot_username, owner_telegram_id, owner_user_id, encrypted_token, token_iv, token_key_version, status, webhook_secret)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `INSERT INTO managed_bots (bot_id, bot_username, owner_telegram_id, owner_user_id, encrypted_token, token_iv, token_key_version, status, webhook_secret, webhook_secret_iv, webhook_secret_key_version)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT (bot_id)
      DO UPDATE SET
-       bot_username       = EXCLUDED.bot_username,
-       owner_telegram_id  = EXCLUDED.owner_telegram_id,
-       owner_user_id      = EXCLUDED.owner_user_id,
-       encrypted_token    = EXCLUDED.encrypted_token,
-       token_iv           = EXCLUDED.token_iv,
-       token_key_version  = EXCLUDED.token_key_version,
-       status             = EXCLUDED.status,
-       webhook_secret     = EXCLUDED.webhook_secret,
-       updated_at         = now()
+       bot_username                = EXCLUDED.bot_username,
+       owner_telegram_id           = EXCLUDED.owner_telegram_id,
+       owner_user_id               = EXCLUDED.owner_user_id,
+       encrypted_token             = EXCLUDED.encrypted_token,
+       token_iv                    = EXCLUDED.token_iv,
+       token_key_version           = EXCLUDED.token_key_version,
+       status                      = EXCLUDED.status,
+       webhook_secret              = EXCLUDED.webhook_secret,
+       webhook_secret_iv           = EXCLUDED.webhook_secret_iv,
+       webhook_secret_key_version  = EXCLUDED.webhook_secret_key_version,
+       updated_at                  = now()
      WHERE managed_bots.owner_telegram_id = EXCLUDED.owner_telegram_id
      RETURNING *`,
-    [data.botId, data.botUsername ?? null, data.ownerTelegramId, data.ownerUserId, data.encryptedToken, data.tokenIv, data.tokenKeyVersion, data.status, data.webhookSecret],
+    [data.botId, data.botUsername ?? null, data.ownerTelegramId, data.ownerUserId, data.encryptedToken, data.tokenIv, data.tokenKeyVersion, data.status, data.webhookSecret, data.webhookSecretIv, data.webhookSecretKeyVersion],
   );
 
   // M-09: If rowCount is 0, the row exists but belongs to a different owner — reject the upsert.
@@ -45,7 +50,10 @@ export async function upsertManagedBot(data: {
     }
     // If still 0 rows somehow, re-query and return (defensive path)
     const refetch = await pool.query<ManagedBotRow>('SELECT * FROM managed_bots WHERE bot_id = $1', [data.botId]);
-    return refetch.rows[0]!;
+    if (!refetch.rows[0]) {
+      throw new AppError('upsertManagedBot: row disappeared after conflict check', 500, 'DB_INCONSISTENCY');
+    }
+    return refetch.rows[0];
   }
 
   logger.debug({ botId: data.botId, status: data.status }, 'upsertManagedBot: done');
@@ -136,14 +144,23 @@ export async function savePollingOffset(botId: number, offset: number): Promise<
 }
 
 /**
- * Fetch the per-bot webhook secret for a given bot.
- * Returns null if the bot is not found, not ACTIVE, or has no secret set.
+ * B-5: Fetch the per-bot webhook secret (encrypted) for a given bot.
+ * Returns null if the bot is not found or not ACTIVE.
+ * The caller (token-store) is responsible for decrypting the returned ciphertext.
  */
-export async function getBotWebhookSecret(botId: number): Promise<string | null> {
+export async function getBotWebhookSecret(botId: number): Promise<{
+  webhook_secret: Buffer | null;
+  webhook_secret_iv: Buffer | null;
+  webhook_secret_key_version: number | null;
+} | null> {
   logger.debug({ botId }, 'getBotWebhookSecret');
-  const result = await pool.query<{ webhook_secret: string | null }>(
-    "SELECT webhook_secret FROM managed_bots WHERE bot_id = $1 AND status = 'ACTIVE'",
+  const result = await pool.query<{
+    webhook_secret: Buffer | null;
+    webhook_secret_iv: Buffer | null;
+    webhook_secret_key_version: number | null;
+  }>(
+    "SELECT webhook_secret, webhook_secret_iv, webhook_secret_key_version FROM managed_bots WHERE bot_id = $1 AND status = 'ACTIVE'",
     [botId],
   );
-  return result.rows[0]?.webhook_secret ?? null;
+  return result.rows[0] ?? null;
 }

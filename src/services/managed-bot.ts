@@ -7,6 +7,7 @@ import * as webhookLogQueries from '../db/queries/webhook-log.js';
 import { invalidateBotTokenCache, invalidateBotWebhookSecretCache } from './token-store.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
+import { ConflictError } from '../utils/errors.js';
 import { randomBytes } from 'node:crypto';
 import type { ManagedBotUpdated } from '../types/telegram.js';
 import type { BotRegistry } from './bot-registry.js';
@@ -51,7 +52,9 @@ export class ManagedBotService {
       // 3. First DB write — PROVISIONING status with the encrypted token already present.
       //    No window where the DB row has PENDING + empty token buffer.
       // M-01: Generate a per-bot webhook secret so a leak is scoped to one bot.
+      // B-5: Encrypt the webhook secret at rest using the same AES-256-GCM pattern as the bot token.
       const webhookSecret = randomBytes(32).toString('hex');
+      const encryptedWebhookSecret = encrypt(webhookSecret);
       logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserting with PROVISIONING status and encrypted token');
       await managedBotQueries.upsertManagedBot({
         botId: bot.id,
@@ -62,7 +65,9 @@ export class ManagedBotService {
         tokenIv: encrypted.iv,
         tokenKeyVersion: encrypted.keyVersion,
         status: 'PROVISIONING',
-        webhookSecret,
+        webhookSecret: encryptedWebhookSecret.ciphertext,
+        webhookSecretIv: encryptedWebhookSecret.iv,
+        webhookSecretKeyVersion: encryptedWebhookSecret.keyVersion,
       });
       logger.debug({ botId: bot.id }, 'handleManagedBotUpdated: upserted with PROVISIONING status');
 
@@ -79,7 +84,8 @@ export class ManagedBotService {
       // 5. Single atomic write — status + all flags + update_mode together
       await managedBotQueries.activateManagedBot(bot.id, updateMode);
 
-      // Register the newly provisioned bot with the registry
+      // Register the newly provisioned bot with the registry.
+      // The registry receives the plaintext webhookSecret for in-memory comparison.
       const childWebhookUrl = `${env.BASE_URL}/webhook/bot/${bot.id}`;
       this.registry.registerBot({
         botId: bot.id,
@@ -97,8 +103,12 @@ export class ManagedBotService {
       const errorMessage = err instanceof Error ? err.message : String(err);
       logger.error({ err, botId: bot.id }, 'handleManagedBotUpdated: provisioning failed, setting DEACTIVATED');
       await webhookLogQueries.markFailed(logEntry.id, errorMessage);
-      await managedBotQueries.updateManagedBotStatus(bot.id, 'DEACTIVATED');
-      logger.warn({ botId: bot.id }, 'handleManagedBotUpdated: bot set to DEACTIVATED');
+      // Only set DEACTIVATED if this is not an ownership conflict
+      if (!(err instanceof ConflictError)) {
+        await managedBotQueries.updateManagedBotStatus(bot.id, 'DEACTIVATED');
+        logger.warn({ botId: bot.id }, 'handleManagedBotUpdated: bot set to DEACTIVATED');
+      }
+      throw err;
     }
   }
 }

@@ -12,6 +12,7 @@ describe('BotRegistry', () => {
   let getAppStateStub: sinon.SinonStub;
   let setAppStateStub: sinon.SinonStub;
   let savePollingOffsetStub: sinon.SinonStub;
+  let findManagedBotByBotIdStub: sinon.SinonStub;
 
   beforeEach(async () => {
     setWebhookStub = sinon.stub().resolves(true);
@@ -20,6 +21,7 @@ describe('BotRegistry', () => {
     getAppStateStub = sinon.stub().resolves(null);
     setAppStateStub = sinon.stub().resolves();
     savePollingOffsetStub = sinon.stub().resolves();
+    findManagedBotByBotIdStub = sinon.stub().resolves(null);
 
     const module = await esmock('../../src/services/bot-registry.ts', {
       '../../src/services/telegram-api.js': {
@@ -35,6 +37,7 @@ describe('BotRegistry', () => {
       },
       '../../src/db/queries/managed-bots.js': {
         savePollingOffset: savePollingOffsetStub,
+        findManagedBotByBotId: findManagedBotByBotIdStub,
       },
     });
     BotRegistry = module.BotRegistry;
@@ -135,6 +138,22 @@ describe('BotRegistry', () => {
       await registry.start();
       await new Promise(r => setTimeout(r, 50));
       expect(getAppStateStub.calledWith('manager_polling_offset')).to.be.true;
+      await registry.stop();
+    });
+
+    it('Fix-10: loads persisted offset from DB for hot-registered child bot', async () => {
+      findManagedBotByBotIdStub.resolves({ polling_offset: 500 });
+      getUpdatesStub.returns(new Promise(() => {})); // hang
+
+      const registry = new BotRegistry();
+      await registry.start(); // start with no bots registered
+      registry.registerBot({ botId: 99, token: 'tok', updateMode: 'polling', allowedUpdates: ['message'], handler: sinon.stub().resolves() });
+      await new Promise(r => setTimeout(r, 100)); // let wireBot complete
+
+      expect(findManagedBotByBotIdStub.calledWith(99)).to.be.true;
+      // getUpdates should have been called with offset=500
+      expect(getUpdatesStub.calledOnce).to.be.true;
+      expect(getUpdatesStub.firstCall.args[1]).to.equal(500);
       await registry.stop();
     });
   });

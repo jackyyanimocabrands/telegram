@@ -9,6 +9,24 @@ import type { TelegramLoginRequest, AuthResponse } from '../types/api.js';
 
 export const authRouter: RouterType = Router();
 
+/**
+ * B-1: Validate that a photo_url from the Telegram Login Widget is a genuine Telegram CDN URL.
+ * Even though the data is HMAC-signed, the value is still attacker-influenced — an attacker
+ * who controls their own bot token can craft a signed payload with an arbitrary URL.
+ * We accept only https://*.telegram.org and https://t.me to prevent SSRF and open-redirect risks.
+ */
+function sanitizePhotoUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return undefined;
+    if (!parsed.hostname.endsWith('.telegram.org') && parsed.hostname !== 't.me') return undefined;
+    return url;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Public endpoint — returns bot username for the Telegram Login Widget. */
 authRouter.get('/config', (_req, res) => {
   res.json({ botUsername: env.BOT_USERNAME });
@@ -31,12 +49,15 @@ authRouter.post<never, AuthResponse | { ok: false; error: string }, TelegramLogi
     }
 
     const telegramId = parseInt(data.id, 10);
+    if (!Number.isFinite(telegramId) || telegramId <= 0) {
+      throw new ValidationError('Invalid Telegram user ID');
+    }
     const user = await userQueries.upsertUser({
       telegramId,
       firstName: data.first_name,
       lastName: data.last_name,
       username: data.username,
-      photoUrl: data.photo_url,
+      photoUrl: sanitizePhotoUrl(data.photo_url),
     });
 
     logger.info({ userId: user.id, telegramId }, 'User authenticated via Telegram');

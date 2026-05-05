@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import { env, getCorsOrigins } from './config/env.js';
 import { logger, fatalExit } from './utils/logger.js';
 import { pool, closePool } from './db/client.js';
@@ -21,15 +22,29 @@ const app = express();
 // Trust the first proxy (ngrok, Cloudflare, load balancer, etc.)
 app.set('trust proxy', 1);
 
+// B-3: Security headers — FIRST middleware so every response is hardened before
+// CORS, body parsing, or any route handler runs.
+app.use(helmet());
+
 // CORS — configurable origins
 const corsOrigins = getCorsOrigins();
+
+// B-6: Warn operators in production when CORS_ORIGINS is not set.
+// getCorsOrigins() returns [] (deny all) when NODE_ENV=production and CORS_ORIGINS is absent.
+// This is intentionally strict but produces silent 403s — alert here so operators don't debug blindly.
+if (env.NODE_ENV === 'production' && corsOrigins !== null && corsOrigins.length === 0) {
+  logger.warn('CORS_ORIGINS is not set — all cross-origin requests will be denied in production');
+}
+
 app.use(cors({
   origin: corsOrigins ?? true,
   credentials: true,
 }));
 
 app.use(express.json({ limit: '1mb' }));
-app.use(express.static('public'));
+// B-4: Mount static files under /public prefix — prevents files from shadowing routes at root
+// and makes the intent explicit.
+app.use('/public', express.static('public'));
 
 async function start(): Promise<void> {
   try {
@@ -97,7 +112,7 @@ async function start(): Promise<void> {
       registry.registerBot({
         botId: bot.bot_id,
         token,
-        updateMode: (bot.update_mode as 'polling' | 'webhook') ?? 'webhook',
+        updateMode: (bot.update_mode ?? 'webhook') as 'polling' | 'webhook',
         allowedUpdates: ['message', 'callback_query'],
         webhookUrl: `${env.BASE_URL}/webhook/bot/${bot.bot_id}`,
         webhookSecret: env.CHILD_WEBHOOK_SECRET,

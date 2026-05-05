@@ -1,7 +1,6 @@
 -- Migration 008: replace boolean processed column with status enum
 -- Three valid states: PENDING (just inserted), PROCESSED (success), FAILED (error)
-
-BEGIN;
+-- Note: BEGIN/COMMIT removed — the migrate.ts runner wraps all migrations in a single outer transaction.
 
 -- Add the new status column with a CHECK constraint
 ALTER TABLE webhook_event_log
@@ -15,5 +14,3 @@ UPDATE webhook_event_log SET status = 'FAILED'    WHERE processed = false AND er
 
 -- Drop the old column
 ALTER TABLE webhook_event_log DROP COLUMN IF EXISTS processed;
-
-COMMIT;

@@ -43,21 +43,21 @@ export function createWebhookRouter(registry: BotRegistry): RouterType {
   router.post(
     '/bot/:botId',
     async (req, res, next) => {
-      const rawBotId = req.params.botId;
-      const botId = parseInt(Array.isArray(rawBotId) ? rawBotId[0]! : rawBotId!, 10);
+      const botId = parseInt(req.params.botId, 10);
 
       if (!Number.isSafeInteger(botId) || botId <= 0) {
-        logger.warn({ rawBotId }, 'Child webhook received invalid botId, rejecting');
+        logger.warn({ rawBotId: req.params.botId }, 'Child webhook received invalid botId, rejecting');
         res.sendStatus(400);
         return;
       }
+
+      res.locals.botId = botId;
 
       // Run async secret verification — passes on valid secret, calls next(err) on failure.
       await verifyChildWebhookSecret(req, res, next);
     },
     async (req, res) => {
-      const rawBotId = req.params.botId;
-      const botId = parseInt(Array.isArray(rawBotId) ? rawBotId[0]! : rawBotId!, 10);
+      const botId = res.locals.botId as number;
 
       const parsed = UpdateSchema.safeParse(req.body);
       if (!parsed.success) {

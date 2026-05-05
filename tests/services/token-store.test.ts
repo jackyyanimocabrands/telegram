@@ -99,19 +99,22 @@ describe('token-store', () => {
     expect(error!.message).to.include('99');
   });
 
-  // ── M-01: Webhook secret cache ──
+  // ── M-01 / B-5: Webhook secret cache (encrypted at rest) ──
+  // The DB now returns encrypted rows; getBotWebhookSecretCached decrypts before caching.
 
   const BOT_SECRET = 'a'.repeat(64); // 64 hex chars = 32 bytes
 
   it('getBotWebhookSecretCached: fetches from DB on first call', async () => {
-    queryStub.resolves({ rows: [{ webhook_secret: BOT_SECRET }] });
+    const enc = encrypt(BOT_SECRET);
+    queryStub.resolves({ rows: [{ webhook_secret: enc.ciphertext, webhook_secret_iv: enc.iv, webhook_secret_key_version: enc.keyVersion }] });
     const secret = await getBotWebhookSecretCached(42);
     expect(secret).to.equal(BOT_SECRET);
     expect(queryStub.calledOnce).to.be.true;
   });
 
   it('getBotWebhookSecretCached: cache hit — second call does not query DB', async () => {
-    queryStub.resolves({ rows: [{ webhook_secret: BOT_SECRET }] });
+    const enc = encrypt(BOT_SECRET);
+    queryStub.resolves({ rows: [{ webhook_secret: enc.ciphertext, webhook_secret_iv: enc.iv, webhook_secret_key_version: enc.keyVersion }] });
     await getBotWebhookSecretCached(42);
     const callsBefore = queryStub.callCount;
 
@@ -120,8 +123,8 @@ describe('token-store', () => {
     expect(queryStub.callCount).to.equal(callsBefore); // no additional DB call
   });
 
-  it('getBotWebhookSecretCached: returns null when DB returns null, does not cache', async () => {
-    queryStub.resolves({ rows: [{ webhook_secret: null }] });
+  it('getBotWebhookSecretCached: returns null when DB returns null secret columns, does not cache', async () => {
+    queryStub.resolves({ rows: [{ webhook_secret: null, webhook_secret_iv: null, webhook_secret_key_version: null }] });
     const secret = await getBotWebhookSecretCached(42);
     expect(secret).to.be.null;
     // No cache entry stored for null — next call must hit DB again
@@ -136,7 +139,8 @@ describe('token-store', () => {
   });
 
   it('invalidateBotWebhookSecretCache: causes next call to hit DB', async () => {
-    queryStub.resolves({ rows: [{ webhook_secret: BOT_SECRET }] });
+    const enc = encrypt(BOT_SECRET);
+    queryStub.resolves({ rows: [{ webhook_secret: enc.ciphertext, webhook_secret_iv: enc.iv, webhook_secret_key_version: enc.keyVersion }] });
     await getBotWebhookSecretCached(42);
     const callsBefore = queryStub.callCount;
 

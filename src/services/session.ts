@@ -24,6 +24,7 @@ export function issueAccessToken(user: AuthenticatedUser): string {
       algorithm: 'ES256',
       expiresIn: env.JWT_EXPIRES_IN,
       issuer: APP_ISSUER,
+      audience: APP_ISSUER,  // B-2: bind token to this service — prevents token reuse across services
     });
     logger.debug({ userId: user.id }, 'issueAccessToken: signed successfully');
     return token;
@@ -42,6 +43,7 @@ export function verifyAccessToken(token: string): AuthenticatedUser {
     const decoded = jwt.verify(token, env.ES256_PUBLIC_KEY, {
       algorithms: ['ES256'],
       issuer: APP_ISSUER,
+      audience: APP_ISSUER,  // B-2: enforce audience claim to match issuer
     }) as jwt.JwtPayload;
 
     if (decoded.ver !== env.JWT_VERSION) {
@@ -53,6 +55,14 @@ export function verifyAccessToken(token: string): AuthenticatedUser {
     const id = parseInt(decoded.sub as string, 10);
     if (!Number.isFinite(id) || id <= 0) {
       throw new AppError('Invalid token subject', 401, 'INVALID_TOKEN');
+    }
+
+    // Fix-11: Guard against missing required payload claims
+    if (!Number.isFinite(decoded.telegramId as number) || (decoded.telegramId as number) <= 0) {
+      throw new AppError('Invalid token telegramId claim', 401, 'INVALID_TOKEN');
+    }
+    if (typeof decoded.firstName !== 'string' || decoded.firstName.length === 0) {
+      throw new AppError('Invalid token firstName claim', 401, 'INVALID_TOKEN');
     }
 
     const user: AuthenticatedUser = {

@@ -57,7 +57,8 @@ export function invalidateBotWebhookSecretCache(botId: number): void {
 }
 
 /**
- * Return the per-bot webhook secret, with 5-minute TTL caching.
+ * B-5: Return the per-bot webhook secret (decrypted), with 5-minute TTL caching.
+ * The webhook_secret column is now AES-256-GCM encrypted at rest.
  * Returns null if the bot has no secret set (legacy / pre-migration rows).
  */
 export async function getBotWebhookSecretCached(botId: number): Promise<string | null> {
@@ -69,11 +70,23 @@ export async function getBotWebhookSecretCached(botId: number): Promise<string |
   }
 
   logger.debug({ botId }, 'getBotWebhookSecretCached: cache miss, querying DB');
-  const secret = await managedBotQueries.getBotWebhookSecret(botId);
-  if (secret !== null) {
-    webhookSecretCache.set(botId, { token: secret, expiresAt: now + CACHE_TTL_MS });
+  const row = await managedBotQueries.getBotWebhookSecret(botId);
+
+  // Row not found (bot doesn't exist or isn't ACTIVE)
+  if (row === null) {
+    logger.debug({ botId, found: false }, 'getBotWebhookSecretCached: result');
+    return null;
   }
-  logger.debug({ botId, found: secret !== null }, 'getBotWebhookSecretCached: result');
+
+  // Row found but secret columns are null — pre-migration or invalidated row
+  if (row.webhook_secret === null || row.webhook_secret_iv === null || row.webhook_secret_key_version === null) {
+    logger.debug({ botId, found: false }, 'getBotWebhookSecretCached: result');
+    return null;
+  }
+
+  // Decrypt and cache the plaintext secret
+  const secret = decrypt(row.webhook_secret, row.webhook_secret_iv, row.webhook_secret_key_version);
+  webhookSecretCache.set(botId, { token: secret, expiresAt: now + CACHE_TTL_MS });
+  logger.debug({ botId, found: true }, 'getBotWebhookSecretCached: result');
   return secret;
 }
-

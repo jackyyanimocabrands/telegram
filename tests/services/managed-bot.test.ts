@@ -2,6 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'mocha';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import esmock from 'esmock';
+import { ConflictError } from '../../src/utils/errors.js';
 
 describe('ManagedBotService', () => {
   let ManagedBotService: any;
@@ -107,8 +108,13 @@ describe('ManagedBotService', () => {
   it('calls markFailed and sets DEACTIVATED when provisioning throws', async () => {
     provisionChildBotStub.rejects(new Error('telegram down'));
     const service = new ManagedBotService(mockRegistry);
-    await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
-
+    let threw = false;
+    try {
+      await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
+    } catch {
+      threw = true;
+    }
+    expect(threw).to.be.true;
     expect(markFailedStub.calledOnce).to.be.true;
     expect(updateManagedBotStatusStub.calledWith(777, 'DEACTIVATED')).to.be.true;
   });
@@ -116,10 +122,29 @@ describe('ManagedBotService', () => {
   it('calls markFailed and sets DEACTIVATED when token rotation fails', async () => {
     replaceManagedBotTokenStub.rejects(new Error('rate limited'));
     const service = new ManagedBotService(mockRegistry);
-    await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
-
+    let threw = false;
+    try {
+      await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
+    } catch {
+      threw = true;
+    }
+    expect(threw).to.be.true;
     expect(markFailedStub.calledOnce).to.be.true;
     expect(updateManagedBotStatusStub.calledWith(777, 'DEACTIVATED')).to.be.true;
+  });
+
+  it('Fix-6: does NOT call updateManagedBotStatus when upsertManagedBot throws ConflictError', async () => {
+    upsertManagedBotStub.rejects(new ConflictError('Bot is already registered to another user'));
+    const service = new ManagedBotService(mockRegistry);
+    let threw = false;
+    try {
+      await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
+    } catch {
+      threw = true;
+    }
+    expect(threw).to.be.true;
+    expect(markFailedStub.calledOnce).to.be.true;
+    expect(updateManagedBotStatusStub.called).to.be.false;
   });
 
   it('upserts once with PROVISIONING status', async () => {
@@ -137,25 +162,29 @@ describe('ManagedBotService', () => {
     expect(config.updateMode).to.equal(process.env.MANAGER_UPDATE_MODE);
   });
 
-  // ── M-01: Per-bot webhook secret ──
+  // ── M-01 / B-5: Per-bot webhook secret (encrypted at rest) ──
 
-  it('M-01: upsertManagedBot called with a webhookSecret', async () => {
+  it('M-01: upsertManagedBot called with encrypted webhookSecret (Buffer)', async () => {
     const service = new ManagedBotService(mockRegistry);
     await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
 
     const upsertArgs = upsertManagedBotStub.firstCall.args[0];
     expect(upsertArgs).to.have.property('webhookSecret');
-    // Generated secret is 32 random bytes as hex = 64 chars
-    expect(upsertArgs.webhookSecret).to.be.a('string').with.lengthOf(64);
+    expect(upsertArgs).to.have.property('webhookSecretIv');
+    expect(upsertArgs).to.have.property('webhookSecretKeyVersion');
+    // B-5: encryptStub returns { ciphertext: Buffer, iv: Buffer, keyVersion: number }
+    // so webhookSecret (ciphertext) must be a Buffer, not the plaintext string.
+    expect(Buffer.isBuffer(upsertArgs.webhookSecret)).to.be.true;
   });
 
-  it('M-01: registerBot called with the same generated webhookSecret as upsert', async () => {
+  it('M-01: registerBot called with plaintext webhookSecret (64-char hex)', async () => {
     const service = new ManagedBotService(mockRegistry);
     await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
 
-    const upsertArgs = upsertManagedBotStub.firstCall.args[0];
     const registryConfig = mockRegistry.registerBot.firstCall.args[0];
-    expect(registryConfig.webhookSecret).to.equal(upsertArgs.webhookSecret);
+    // The registry receives the plaintext hex secret (32 bytes = 64 hex chars).
+    // The DB receives the encrypted form; the registry uses plaintext for in-memory comparison.
+    expect(registryConfig.webhookSecret).to.be.a('string').with.lengthOf(64);
   });
 
   it('M-01: invalidateBotWebhookSecretCache called after provisioning', async () => {
