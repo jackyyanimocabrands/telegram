@@ -30,10 +30,16 @@ export async function tryAcquireUpdate(
 
 export async function markProcessed(id: number): Promise<void> {
   logger.debug({ id }, 'markProcessed: webhook event marked processed');
-  await pool.query('UPDATE webhook_event_log SET processed = true, error = NULL WHERE id = $1', [id]);
+  await pool.query(
+    `UPDATE webhook_event_log SET status = 'PROCESSED', error = NULL WHERE id = $1`,
+    [id],
+  );
 }
 
 export async function markFailed(id: number, error: string): Promise<void> {
   logger.warn({ id, error }, 'markFailed: webhook event marked failed — available for retry');
-  await pool.query('UPDATE webhook_event_log SET processed = false, error = $1 WHERE id = $2', [error, id]);
+  await pool.query(
+    `UPDATE webhook_event_log SET status = 'FAILED', error = $1 WHERE id = $2`,
+    [error, id],
+  );
 }

@@ -20,7 +20,7 @@ describe('ManagedBotService', () => {
   let mockRegistry: any;
 
   const mockUser = { id: 1, telegram_id: 99887766, first_name: 'Alice', last_name: null, username: 'alice', photo_url: null, created_at: new Date(), updated_at: new Date() };
-  const mockLogEntry = { id: 10, bot_id: 777, update_id: 1, event_type: 'managed_bot_updated', payload: {}, processed: false, error: null, created_at: new Date() };
+  const mockLogEntry = { id: 10, bot_id: 777, update_id: 1, event_type: 'managed_bot_updated', payload: {}, status: 'PENDING', error: null, created_at: new Date() };
   const mockManagedBotUpdated = {
     user: { id: 99887766, is_bot: false, first_name: 'Alice' },
     bot: { id: 777, is_bot: true, first_name: 'MyBot', username: 'mybot' },

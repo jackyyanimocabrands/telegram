@@ -12,6 +12,8 @@ declare global {
 
 export type ManagedBotStatus = 'PENDING' | 'PROVISIONING' | 'ACTIVE' | 'TOKEN_ROTATED' | 'DEACTIVATED';
 
+export type WebhookEventStatus = 'PENDING' | 'PROCESSED' | 'FAILED';
+
 export interface AuthenticatedUser {
   id: number;
   telegramId: number;
@@ -104,7 +106,7 @@ export interface WebhookEventLogRow {
   update_id: number;
   event_type: string;
   payload: unknown;
-  processed: boolean;
+  status: WebhookEventStatus;
   error: string | null;
   created_at: Date;
 }
