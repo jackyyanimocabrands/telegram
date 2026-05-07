@@ -11,7 +11,7 @@ const envSchema = z.object({
   BOT_USERNAME: z.string().min(1, 'BOT_USERNAME is required').transform(v => v.replace(/^@/, '')),
   WEBHOOK_SECRET: z.string().min(32).regex(/^[A-Za-z0-9_\-]+$/, 'WEBHOOK_SECRET must be at least 32 chars and contain only [A-Za-z0-9_-]'),
   CHILD_WEBHOOK_SECRET: z.string().min(32).regex(/^[A-Za-z0-9_\-]+$/, 'CHILD_WEBHOOK_SECRET must be at least 32 chars and contain only [A-Za-z0-9_-]'),
-  DATABASE_URL: z.string().url('DATABASE_URL must be a valid connection string'),
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   ENCRYPTION_MASTER_KEY: z.string().regex(/^[0-9a-f]{64}$/, 'ENCRYPTION_MASTER_KEY must be 64 hex chars (32 bytes)'),
   ENCRYPTION_KEY_VERSION: z.coerce.number().int().positive().default(1),
   ES256_PRIVATE_KEY: z.string().min(1, 'ES256_PRIVATE_KEY is required'),
