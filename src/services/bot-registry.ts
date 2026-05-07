@@ -29,8 +29,18 @@ export class BotRegistry {
   private started = false;
   // MI-07: Store the completion promise for each polling loop so stop() can await them.
   private readonly pollingDone: Map<number | 'manager', Promise<void>> = new Map();
+  private readonly telegram: TelegramClient;
+  private readonly drainTimeoutMs: number;
 
-  constructor(private readonly telegram: TelegramClient) {}
+  /**
+   * @param telegram - TelegramClient instance
+   * @param drainTimeoutMs - Safety timeout for stop() to wait for polling loops to exit.
+   *                         Defaults to 3000ms. Pass a smaller value (e.g. 100) in tests.
+   */
+  constructor(telegram: TelegramClient, drainTimeoutMs: number = 3000) {
+    this.telegram = telegram;
+    this.drainTimeoutMs = drainTimeoutMs;
+  }
 
   /** Register a bot. If registry is already started, immediately wires up its transport. */
   registerBot(config: BotConfig): void {
@@ -82,8 +92,8 @@ export class BotRegistry {
       }
     }
     // MI-07: Await all completion promises instead of busy-waiting.
-    // A 3-second safety timeout prevents hanging if a loop is stuck on a non-abortable call.
-    const drainTimeout = new Promise<void>(resolve => setTimeout(resolve, 3000));
+    // A safety timeout prevents hanging if a loop is stuck on a non-abortable call.
+    const drainTimeout = new Promise<void>(resolve => setTimeout(resolve, this.drainTimeoutMs));
     await Promise.race([
       Promise.allSettled([...this.pollingDone.values()]),
       drainTimeout,

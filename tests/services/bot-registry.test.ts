@@ -48,7 +48,7 @@ describe('BotRegistry', () => {
 
   describe('registerBot', () => {
     it('registers a bot and stores it internally', () => {
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       const handler = sinon.stub().resolves();
       registry.registerBot({ botId: 1, token: 'tok', updateMode: 'webhook', allowedUpdates: ['message'], handler, webhookUrl: 'http://x', webhookSecret: 'sec' });
       // no error thrown = success
@@ -58,7 +58,7 @@ describe('BotRegistry', () => {
   describe('start() — webhook mode', () => {
     it('calls setWebhook for each webhook-mode bot', async () => {
       mockTelegram.whenSetWebhook(true);
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({
         botId: 'manager',
         token: 'tok',
@@ -75,7 +75,7 @@ describe('BotRegistry', () => {
 
     it('is idempotent — calling start() twice only wires bots once', async () => {
       mockTelegram.whenSetWebhook(true);
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({ botId: 1, token: 'tok', updateMode: 'webhook', allowedUpdates: [], handler: sinon.stub().resolves(), webhookUrl: 'http://x', webhookSecret: 's' });
       await registry.start();
       await registry.start();
@@ -84,7 +84,7 @@ describe('BotRegistry', () => {
 
     it('logs error and continues if setWebhook throws', async () => {
       mockTelegram.setWebhook.rejects(new Error('network'));
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({ botId: 1, token: 'tok', updateMode: 'webhook', allowedUpdates: [], handler: sinon.stub().resolves(), webhookUrl: 'http://x', webhookSecret: 's' });
       // Should not throw — just log the error
       let threw = false;
@@ -97,7 +97,7 @@ describe('BotRegistry', () => {
     });
 
     it('logs error if webhookUrl is missing in webhook mode', async () => {
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({ botId: 1, token: 'tok', updateMode: 'webhook', allowedUpdates: [], handler: sinon.stub().resolves() });
       let threw = false;
       try {
@@ -120,7 +120,7 @@ describe('BotRegistry', () => {
         return new Promise(() => {});
       });
 
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({ botId: 'manager', token: 'tok', updateMode: 'polling', allowedUpdates: ['message'], handler: sinon.stub().resolves() });
       await registry.start();
       // Give loop time to start
@@ -133,7 +133,7 @@ describe('BotRegistry', () => {
       getAppStateStub.resolves('42');
       mockTelegram.getUpdates.returns(new Promise(() => {})); // hang
 
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({ botId: 'manager', token: 'tok', updateMode: 'polling', allowedUpdates: ['message'], handler: sinon.stub().resolves() });
       await registry.start();
       await new Promise(r => setTimeout(r, 50));
@@ -145,7 +145,7 @@ describe('BotRegistry', () => {
       findManagedBotByBotIdStub.resolves({ polling_offset: 500 });
       mockTelegram.getUpdates.returns(new Promise(() => {})); // hang
 
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       await registry.start(); // start with no bots registered
       registry.registerBot({ botId: 99, token: 'tok', updateMode: 'polling', allowedUpdates: ['message'], handler: sinon.stub().resolves() });
       await new Promise(r => setTimeout(r, 100)); // let wireBot complete
@@ -161,7 +161,7 @@ describe('BotRegistry', () => {
   describe('dispatch()', () => {
     it('calls the registered handler with the update', async () => {
       const handler = sinon.stub().resolves();
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({ botId: 1, token: 'tok', updateMode: 'webhook', allowedUpdates: [], handler, webhookUrl: 'http://x', webhookSecret: 's' });
       const update: Update = { update_id: 100, message: { message_id: 1, chat: { id: 1, type: 'private' }, date: 1 } };
       await registry.dispatch(1, update);
@@ -170,7 +170,7 @@ describe('BotRegistry', () => {
     });
 
     it('does nothing (no throw) when no handler is registered for botId', async () => {
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       const update: Update = { update_id: 1 };
       let threw = false;
       try {
@@ -183,7 +183,7 @@ describe('BotRegistry', () => {
 
     it('swallows handler errors (does not propagate)', async () => {
       const handler = sinon.stub().rejects(new Error('handler error'));
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({ botId: 1, token: 'tok', updateMode: 'webhook', allowedUpdates: [], handler, webhookUrl: 'http://x', webhookSecret: 's' });
       const update: Update = { update_id: 1 };
       let threw = false;
@@ -198,7 +198,7 @@ describe('BotRegistry', () => {
 
   describe('stop()', () => {
     it('resolves cleanly when no polling bots are running', async () => {
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       let threw = false;
       try {
         await registry.stop();
@@ -216,7 +216,7 @@ describe('BotRegistry', () => {
         });
       });
 
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({ botId: 'manager', token: 'tok', updateMode: 'polling', allowedUpdates: [], handler: sinon.stub().resolves() });
       await registry.start();
       await new Promise(r => setTimeout(r, 50)); // let loop start
@@ -228,7 +228,7 @@ describe('BotRegistry', () => {
   describe('hot registration after start()', () => {
     it('immediately wires a bot registered after start()', async () => {
       mockTelegram.whenSetWebhook(true);
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       await registry.start();
       registry.registerBot({ botId: 5, token: 'tok', updateMode: 'webhook', allowedUpdates: [], handler: sinon.stub().resolves(), webhookUrl: 'http://x', webhookSecret: 's' });
       await new Promise(r => setTimeout(r, 50));
@@ -247,7 +247,7 @@ describe('BotRegistry', () => {
       });
 
       const handler = sinon.stub().resolves();
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({ botId: 'manager', token: 'tok', updateMode: 'polling', allowedUpdates: ['message'], handler });
       await registry.start();
       await new Promise(r => setTimeout(r, 100));
@@ -265,7 +265,7 @@ describe('BotRegistry', () => {
       });
 
       const handler = sinon.stub().resolves();
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({ botId: 42, token: 'tok', updateMode: 'polling', allowedUpdates: ['message'], handler });
       await registry.start();
       await new Promise(r => setTimeout(r, 100));
@@ -288,7 +288,7 @@ describe('BotRegistry', () => {
       });
 
       const handler = sinon.stub().resolves();
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({ botId: 77, token: 'tok', updateMode: 'polling', allowedUpdates: ['message'], handler });
       await registry.start();
       await new Promise(r => setTimeout(r, 100));
@@ -307,7 +307,7 @@ describe('BotRegistry', () => {
         return new Promise(() => {});
       });
 
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({ botId: 88, token: 'tok', updateMode: 'polling', allowedUpdates: [], handler: sinon.stub().resolves() });
       await registry.start();
       await new Promise(r => setTimeout(r, 100));
@@ -325,7 +325,7 @@ describe('BotRegistry', () => {
         });
       });
 
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({ botId: 'manager', token: 'tok', updateMode: 'polling', allowedUpdates: [], handler: sinon.stub().resolves() });
       await registry.start();
       await new Promise(r => setTimeout(r, 30));
@@ -335,12 +335,12 @@ describe('BotRegistry', () => {
       const elapsed = Date.now() - t0;
 
       // stop() should resolve quickly after abort — not wait 2000ms (old busy-wait max)
-      expect(elapsed).to.be.lessThan(1000);
+      expect(elapsed).to.be.lessThan(500);
     });
 
     it('stop() resolves cleanly with no polling bots', async () => {
       mockTelegram.whenSetWebhook(true);
-      const registry = new BotRegistry(mockTelegram);
+      const registry = new BotRegistry(mockTelegram, 100);
       registry.registerBot({ botId: 1, token: 'tok', updateMode: 'webhook', allowedUpdates: [], handler: sinon.stub().resolves(), webhookUrl: 'http://x', webhookSecret: 's' });
       await registry.start();
       // No polling bots — should resolve immediately
