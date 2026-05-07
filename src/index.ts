@@ -15,6 +15,7 @@ import { BotRegistry } from './services/bot-registry.js';
 import { ManagedBotService } from './services/managed-bot.js';
 import { createChildBotHandler } from './services/child-bot.js';
 import { getDecryptedBotToken } from './services/token-store.js';
+import { HttpTelegramClient } from './services/telegram-api.js';
 import * as managedBotQueries from './db/queries/managed-bots.js';
 
 const app = express();
@@ -64,8 +65,9 @@ async function start(): Promise<void> {
     }
 
     // ── BotRegistry setup ──
-    const registry = new BotRegistry();
-    const managedBotService = new ManagedBotService(registry);
+    const telegram = new HttpTelegramClient();
+    const registry = new BotRegistry(telegram);
+    const managedBotService = new ManagedBotService(registry, telegram);
 
     // Register manager bot
     registry.registerBot({

@@ -26,13 +26,13 @@ describe('child-bot service', () => {
 
     const module = await esmock('../../src/services/child-bot.ts', {
       '../../src/services/telegram-api.js': {
-        TelegramApiClient: {
-          setMyName: setMyNameStub,
-          setMyDescription: setMyDescriptionStub,
-          setMyShortDescription: setMyShortDescriptionStub,
-          setMyCommands: setMyCommandsStub,
-          sendMessage: sendMessageStub,
-          answerCallbackQuery: answerCallbackQueryStub,
+        HttpTelegramClient: class MockHttpTelegramClient {
+          setMyName = setMyNameStub;
+          setMyDescription = setMyDescriptionStub;
+          setMyShortDescription = setMyShortDescriptionStub;
+          setMyCommands = setMyCommandsStub;
+          sendMessage = sendMessageStub;
+          answerCallbackQuery = answerCallbackQueryStub;
         },
       },
       '../../src/services/token-store.js': { getDecryptedBotToken: getDecryptedBotTokenStub },

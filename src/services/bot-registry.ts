@@ -1,4 +1,4 @@
-import { TelegramApiClient } from './telegram-api.js';
+import type { TelegramClient } from './telegram-api.js';
 import { logger } from '../utils/logger.js';
 import * as appStateQueries from '../db/queries/app-state.js';
 import * as managedBotQueries from '../db/queries/managed-bots.js';
@@ -29,6 +29,8 @@ export class BotRegistry {
   private started = false;
   // MI-07: Store the completion promise for each polling loop so stop() can await them.
   private readonly pollingDone: Map<number | 'manager', Promise<void>> = new Map();
+
+  constructor(private readonly telegram: TelegramClient) {}
 
   /** Register a bot. If registry is already started, immediately wires up its transport. */
   registerBot(config: BotConfig): void {
@@ -117,7 +119,7 @@ export class BotRegistry {
       return;
     }
     try {
-      await TelegramApiClient.setWebhook(entry.token, entry.webhookUrl, entry.allowedUpdates, entry.webhookSecret);
+      await this.telegram.setWebhook(entry.token, entry.webhookUrl, entry.allowedUpdates, entry.webhookSecret);
       logger.info({ botId: entry.botId, webhookUrl: entry.webhookUrl }, 'BotRegistry: webhook set');
     } catch (err) {
       logger.error({ err, botId: entry.botId }, 'BotRegistry: setWebhook failed');
@@ -127,7 +129,7 @@ export class BotRegistry {
   private async startPolling(entry: BotEntry): Promise<void> {
     // Remove any existing webhook
     try {
-      await TelegramApiClient.deleteWebhook(entry.token);
+      await this.telegram.deleteWebhook(entry.token);
       logger.info({ botId: entry.botId }, 'BotRegistry: webhook deleted for polling mode');
     } catch (err) {
       logger.warn({ err, botId: entry.botId }, 'BotRegistry: deleteWebhook failed (continuing)');
@@ -154,7 +156,7 @@ export class BotRegistry {
     const donePromise = (async () => {
       while (!ac.signal.aborted) {
         try {
-          const updates = await TelegramApiClient.getUpdates(
+          const updates = await this.telegram.getUpdates(
             entry.token,
             offset,
             LONG_POLL_TIMEOUT_SECONDS,

@@ -1,4 +1,4 @@
-import { TelegramApiClient } from './telegram-api.js';
+import type { TelegramClient } from './telegram-api.js';
 import { encrypt } from './encryption.js';
 import { provisionChildBot, createChildBotHandler } from './child-bot.js';
 import * as managedBotQueries from '../db/queries/managed-bots.js';
@@ -13,7 +13,10 @@ import type { ManagedBotUpdated } from '../types/telegram.js';
 import type { BotRegistry } from './bot-registry.js';
 
 export class ManagedBotService {
-  constructor(private readonly registry: BotRegistry) {}
+  constructor(
+    private readonly registry: BotRegistry,
+    private readonly telegram: TelegramClient,
+  ) {}
 
   /**
    * Phase 1 of bot provisioning: rotate the bot token and persist the PROVISIONING
@@ -24,7 +27,7 @@ export class ManagedBotService {
     ownerTelegramId: number,
     ownerUserId: number,
   ): Promise<{ rotatedToken: string; webhookSecret: string }> {
-    const rotatedToken = await TelegramApiClient.replaceManagedBotToken(env.BOT_TOKEN, bot.id);
+    const rotatedToken = await this.telegram.replaceManagedBotToken(env.BOT_TOKEN, bot.id);
     logger.info({ botId: bot.id }, 'handleManagedBotUpdated: rotated managed bot token');
 
     const encrypted = encrypt(rotatedToken);

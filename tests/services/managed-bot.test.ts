@@ -3,10 +3,11 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import esmock from 'esmock';
 import { ConflictError } from '../../src/utils/errors.js';
+import { MockTelegramClient } from '../mocks/telegram-client.js';
 
 describe('ManagedBotService', () => {
   let ManagedBotService: any;
-  let replaceManagedBotTokenStub: sinon.SinonStub;
+  let mockTelegram: MockTelegramClient;
   let encryptStub: sinon.SinonStub;
   let provisionChildBotStub: sinon.SinonStub;
   let upsertManagedBotStub: sinon.SinonStub;
@@ -28,7 +29,8 @@ describe('ManagedBotService', () => {
   };
 
   beforeEach(async () => {
-    replaceManagedBotTokenStub = sinon.stub().resolves('new-rotated-token');
+    mockTelegram = new MockTelegramClient();
+    mockTelegram.whenReplaceManagedBotToken('new-rotated-token');
     encryptStub = sinon.stub().returns({ ciphertext: Buffer.from('enc'), iv: Buffer.from('iv'), keyVersion: 1 });
     provisionChildBotStub = sinon.stub().resolves();
     upsertManagedBotStub = sinon.stub().resolves({});
@@ -43,10 +45,9 @@ describe('ManagedBotService', () => {
 
     mockRegistry = { registerBot: sinon.stub() };
 
+    // Get ManagedBotService from esmock module so DB stubs are applied.
+    // Do NOT include telegram-api.js — TelegramClient is injected via constructor.
     const module = await esmock('../../src/services/managed-bot.ts', {
-      '../../src/services/telegram-api.js': {
-        TelegramApiClient: { replaceManagedBotToken: replaceManagedBotTokenStub },
-      },
       '../../src/services/encryption.js': { encrypt: encryptStub },
       '../../src/services/child-bot.js': {
         provisionChildBot: provisionChildBotStub,
@@ -72,15 +73,15 @@ describe('ManagedBotService', () => {
   });
 
   afterEach(async () => {
-    sinon.restore();
+    sinon.resetHistory();
     await esmock.purge();
   });
 
   it('full provisioning flow succeeds', async () => {
-    const service = new ManagedBotService(mockRegistry);
+    const service = new ManagedBotService(mockRegistry, mockTelegram);
     await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
 
-    expect(replaceManagedBotTokenStub.calledOnce).to.be.true;
+    expect(mockTelegram.replaceManagedBotToken.calledOnce).to.be.true;
     expect(provisionChildBotStub.calledOnce).to.be.true;
     expect(activateManagedBotStub.calledOnce).to.be.true;
     expect(mockRegistry.registerBot.calledOnce).to.be.true;
@@ -89,25 +90,25 @@ describe('ManagedBotService', () => {
 
   it('skips when tryAcquireUpdate returns null (duplicate)', async () => {
     tryAcquireUpdateStub.resolves(null);
-    const service = new ManagedBotService(mockRegistry);
+    const service = new ManagedBotService(mockRegistry, mockTelegram);
     await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
 
-    expect(replaceManagedBotTokenStub.called).to.be.false;
+    expect(mockTelegram.replaceManagedBotToken.called).to.be.false;
     expect(markProcessedStub.called).to.be.false;
   });
 
   it('calls markFailed and sets DEACTIVATED when user not found', async () => {
     findUserByTelegramIdStub.resolves(null);
-    const service = new ManagedBotService(mockRegistry);
+    const service = new ManagedBotService(mockRegistry, mockTelegram);
     await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
 
     expect(markFailedStub.calledWith(mockLogEntry.id, 'user_not_found')).to.be.true;
-    expect(replaceManagedBotTokenStub.called).to.be.false;
+    expect(mockTelegram.replaceManagedBotToken.called).to.be.false;
   });
 
   it('calls markFailed and sets DEACTIVATED when provisioning throws', async () => {
     provisionChildBotStub.rejects(new Error('telegram down'));
-    const service = new ManagedBotService(mockRegistry);
+    const service = new ManagedBotService(mockRegistry, mockTelegram);
     let threw = false;
     try {
       await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
@@ -120,8 +121,8 @@ describe('ManagedBotService', () => {
   });
 
   it('calls markFailed and sets DEACTIVATED when token rotation fails', async () => {
-    replaceManagedBotTokenStub.rejects(new Error('rate limited'));
-    const service = new ManagedBotService(mockRegistry);
+    mockTelegram.replaceManagedBotToken.rejects(new Error('rate limited'));
+    const service = new ManagedBotService(mockRegistry, mockTelegram);
     let threw = false;
     try {
       await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
@@ -135,7 +136,7 @@ describe('ManagedBotService', () => {
 
   it('Fix-6: does NOT call updateManagedBotStatus when upsertManagedBot throws ConflictError', async () => {
     upsertManagedBotStub.rejects(new ConflictError('Bot is already registered to another user'));
-    const service = new ManagedBotService(mockRegistry);
+    const service = new ManagedBotService(mockRegistry, mockTelegram);
     let threw = false;
     try {
       await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
@@ -148,14 +149,14 @@ describe('ManagedBotService', () => {
   });
 
   it('upserts once with PROVISIONING status', async () => {
-    const service = new ManagedBotService(mockRegistry);
+    const service = new ManagedBotService(mockRegistry, mockTelegram);
     await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
     expect(upsertManagedBotStub.callCount).to.equal(1);
     expect(upsertManagedBotStub.firstCall.args[0].status).to.equal('PROVISIONING');
   });
 
   it('registers bot with correct botId and updateMode', async () => {
-    const service = new ManagedBotService(mockRegistry);
+    const service = new ManagedBotService(mockRegistry, mockTelegram);
     await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
     const config = mockRegistry.registerBot.firstCall.args[0];
     expect(config.botId).to.equal(777);
@@ -165,7 +166,7 @@ describe('ManagedBotService', () => {
   // ── M-01 / B-5: Per-bot webhook secret (encrypted at rest) ──
 
   it('M-01: upsertManagedBot called with encrypted webhookSecret (Buffer)', async () => {
-    const service = new ManagedBotService(mockRegistry);
+    const service = new ManagedBotService(mockRegistry, mockTelegram);
     await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
 
     const upsertArgs = upsertManagedBotStub.firstCall.args[0];
@@ -178,7 +179,7 @@ describe('ManagedBotService', () => {
   });
 
   it('M-01: registerBot called with plaintext webhookSecret (64-char hex)', async () => {
-    const service = new ManagedBotService(mockRegistry);
+    const service = new ManagedBotService(mockRegistry, mockTelegram);
     await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
 
     const registryConfig = mockRegistry.registerBot.firstCall.args[0];
@@ -188,7 +189,7 @@ describe('ManagedBotService', () => {
   });
 
   it('M-01: invalidateBotWebhookSecretCache called after provisioning', async () => {
-    const service = new ManagedBotService(mockRegistry);
+    const service = new ManagedBotService(mockRegistry, mockTelegram);
     await service.handleManagedBotUpdated(1, mockManagedBotUpdated);
 
     expect(invalidateBotWebhookSecretCacheStub.calledWith(777)).to.be.true;

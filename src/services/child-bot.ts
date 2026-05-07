@@ -1,7 +1,18 @@
-import { TelegramApiClient } from './telegram-api.js';
+import { HttpTelegramClient } from './telegram-api.js';
 import { getDecryptedBotToken } from './token-store.js';
 import { logger } from '../utils/logger.js';
 import type { Message, CallbackQuery } from '../types/telegram.js';
+
+/**
+ * Factory function — tests can esmock this to provide a mock Telegram client.
+ * Using a factory (not class instantiation) allows esmock to properly intercept.
+ */
+export function createTelegramClient() {
+  return new HttpTelegramClient();
+}
+
+/** Module-level Telegram client instance. */
+const telegram = createTelegramClient();
 
 export async function provisionChildBot(
   token: string,
@@ -11,22 +22,22 @@ export async function provisionChildBot(
   logger.info({ botId, ownerFirstName }, 'provisionChildBot: start (profile + commands only)');
 
   // NOTE: setWebhook is NOT called here — BotRegistry owns transport wiring.
-  await TelegramApiClient.setMyName(token, `${ownerFirstName}'s AI Agent`);
+  await telegram.setMyName(token, `${ownerFirstName}'s AI Agent`);
   logger.debug({ botId }, 'provisionChildBot: name set');
 
-  await TelegramApiClient.setMyDescription(
+  await telegram.setMyDescription(
     token,
     `This is ${ownerFirstName}'s personal AI bot powered by Animocamind.`,
   );
   logger.debug({ botId }, 'provisionChildBot: description set');
 
-  await TelegramApiClient.setMyShortDescription(
+  await telegram.setMyShortDescription(
     token,
     `${ownerFirstName}'s personal AI agent by Animocamind.`,
   );
   logger.debug({ botId }, 'provisionChildBot: short description set');
 
-  await TelegramApiClient.setMyCommands(token, [
+  await telegram.setMyCommands(token, [
     { command: 'start', description: 'Start the bot' },
     { command: 'help', description: 'Show help' },
     { command: 'settings', description: 'Manage your settings' },
@@ -58,20 +69,20 @@ export async function handleChildBotMessage(botId: number, message: Message): Pr
 
     if (text.startsWith('/start')) {
       logger.debug({ botId, chatId }, 'handleChildBotMessage: handling /start');
-      await TelegramApiClient.sendMessage(token, chatId, "Hello! I'm your personal AI agent powered by Animocamind. How can I help you today?");
+      await telegram.sendMessage(token, chatId, "Hello! I'm your personal AI agent powered by Animocamind. How can I help you today?");
       return;
     }
 
     if (text.startsWith('/help')) {
       logger.debug({ botId, chatId }, 'handleChildBotMessage: handling /help');
-      await TelegramApiClient.sendMessage(token, chatId, '/start - Start the bot\n/help - Show help\n/settings - Manage settings\n\nJust type a message to chat with me!');
+      await telegram.sendMessage(token, chatId, '/start - Start the bot\n/help - Show help\n/settings - Manage settings\n\nJust type a message to chat with me!');
       return;
     }
 
     logger.debug({ botId, chatId }, 'handleChildBotMessage: echoing message');
     // Strip Telegram markup characters from user input before echoing
     const sanitized = text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
-    await TelegramApiClient.sendMessage(token, chatId, `Echo: ${sanitized}`);
+    await telegram.sendMessage(token, chatId, `Echo: ${sanitized}`);
   } catch (err) {
     logger.error({ err, botId, chatId, from: message.from?.id }, 'handleChildBotMessage: failed');
     throw err;
@@ -83,7 +94,7 @@ export async function handleChildBotCallback(botId: number, callbackQuery: Callb
 
   try {
     const token = await getDecryptedBotToken(botId);
-    await TelegramApiClient.answerCallbackQuery(token, callbackQuery.id, 'Received');
+    await telegram.answerCallbackQuery(token, callbackQuery.id, 'Received');
     logger.debug({ botId, callbackQueryId: callbackQuery.id }, 'handleChildBotCallback: answered');
   } catch (err) {
     logger.error({ err, botId, callbackQueryId: callbackQuery.id, from: callbackQuery.from.id }, 'handleChildBotCallback: failed');
