@@ -58,17 +58,9 @@ async function start(): Promise<void> {
     // C-02 Part 2: On startup, mark stale PENDING/PROVISIONING rows as DEACTIVATED.
     // These indicate a crashed provisioning flow; they must be cleaned up before the
     // registry starts so they don't block retry via the same update_id dedup logic.
-    const staleResult = await pool.query<{ bot_id: number; status: string }>(
-      `UPDATE managed_bots
-       SET status = 'DEACTIVATED', updated_at = NOW()
-       WHERE status IN ('PENDING', 'PROVISIONING')
-         AND updated_at < NOW() - INTERVAL '5 minutes'
-       RETURNING bot_id, status`,
-    );
-    if (staleResult.rowCount && staleResult.rowCount > 0) {
-      for (const row of staleResult.rows) {
-        logger.warn({ botId: row.bot_id, previousStatus: row.status }, 'startup: stale provisioning row deactivated');
-      }
+    const staleCount = await managedBotQueries.deactivateStalePendingBots(5);
+    if (staleCount > 0) {
+      logger.warn({ count: staleCount }, 'Deactivated stale PENDING/PROVISIONING bots at startup');
     }
 
     // ── BotRegistry setup ──

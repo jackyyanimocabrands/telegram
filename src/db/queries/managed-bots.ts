@@ -144,6 +144,23 @@ export async function savePollingOffset(botId: number, offset: number): Promise<
 }
 
 /**
+ * Deactivates bots that are stuck in PENDING or PROVISIONING status
+ * for longer than `ageMinutes`. Called at startup to recover from
+ * crashed mid-provisioning processes.
+ */
+export async function deactivateStalePendingBots(ageMinutes: number = 5): Promise<number> {
+  const result = await pool.query<{ bot_id: number }>(
+    `UPDATE managed_bots
+     SET status = 'DEACTIVATED', updated_at = NOW()
+     WHERE status IN ('PENDING', 'PROVISIONING')
+       AND updated_at < NOW() - ($1 || ' minutes')::interval
+     RETURNING bot_id`,
+    [ageMinutes],
+  );
+  return result.rowCount ?? 0;
+}
+
+/**
  * B-5: Fetch the per-bot webhook secret (encrypted) for a given bot.
  * Returns null if the bot is not found or not ACTIVE.
  * The caller (token-store) is responsible for decrypting the returned ciphertext.

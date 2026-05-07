@@ -8,8 +8,8 @@ interface CacheEntry {
   expiresAt: number;
 }
 
-export const tokenCache = new Map<number, CacheEntry>();
-export const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const tokenCache = new Map<number, CacheEntry>();
+export const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — exported for test time-mocking
 
 /**
  * Invalidate a cached token entry. Call this whenever a bot's token is rotated.
@@ -45,7 +45,7 @@ export async function getDecryptedBotToken(botId: number): Promise<string> {
 }
 
 // M-01: Per-bot webhook secret cache — same TTL pattern as token cache.
-export const webhookSecretCache = new Map<number, CacheEntry>();
+const webhookSecretCache = new Map<number, CacheEntry>();
 
 /**
  * Invalidate a cached webhook secret entry. Call this after provisioning a bot
@@ -89,4 +89,41 @@ export async function getBotWebhookSecretCached(botId: number): Promise<string |
   webhookSecretCache.set(botId, { token: secret, expiresAt: now + CACHE_TTL_MS });
   logger.debug({ botId, found: true }, 'getBotWebhookSecretCached: result');
   return secret;
+}
+
+/**
+ * Clears both caches. For use in test setup only — not for production use.
+ */
+export function clearCachesForTesting(): void {
+  tokenCache.clear();
+  webhookSecretCache.clear();
+}
+
+/**
+ * Returns cache statistics for observability. For production monitoring.
+ */
+export function getCacheStats(): {
+  tokenCacheSize: number;
+  webhookSecretCacheSize: number;
+} {
+  return {
+    tokenCacheSize: tokenCache.size,
+    webhookSecretCacheSize: webhookSecretCache.size,
+  };
+}
+
+/**
+ * Checks if a botId has a cached webhook secret entry.
+ * For use in tests only — not for production use.
+ */
+export function webhookSecretCacheHasForTesting(botId: number): boolean {
+  return webhookSecretCache.has(botId);
+}
+
+/**
+ * Checks if a botId has a cached token entry.
+ * For use in tests only — not for production use.
+ */
+export function tokenCacheHasForTesting(botId: number): boolean {
+  return tokenCache.has(botId);
 }

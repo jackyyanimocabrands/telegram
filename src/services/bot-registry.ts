@@ -4,6 +4,8 @@ import * as appStateQueries from '../db/queries/app-state.js';
 import * as managedBotQueries from '../db/queries/managed-bots.js';
 import type { Update } from '../types/telegram.js';
 
+const LONG_POLL_TIMEOUT_SECONDS = 25;
+
 export interface BotConfig {
   botId: number | 'manager';
   token: string;
@@ -37,6 +39,23 @@ export class BotRegistry {
     if (this.started) {
       void this.wireBot(entry);
     }
+  }
+
+  /**
+   * Removes a bot from the registry. Stops its polling loop or removes its
+   * webhook route. Idempotent — returns silently if the bot is not registered.
+   */
+  deregisterBot(botId: number | 'manager'): void {
+    const entry = this.bots.get(botId);
+    if (!entry) return;
+
+    // Stop polling if running
+    entry.abortController?.abort();
+
+    // Remove from the map
+    this.bots.delete(botId);
+
+    logger.debug({ botId }, 'Bot deregistered');
   }
 
   /** Start all registered bots. Idempotent. */
@@ -138,7 +157,7 @@ export class BotRegistry {
           const updates = await TelegramApiClient.getUpdates(
             entry.token,
             offset,
-            25,
+            LONG_POLL_TIMEOUT_SECONDS,
             entry.allowedUpdates,
             ac.signal,
           );
