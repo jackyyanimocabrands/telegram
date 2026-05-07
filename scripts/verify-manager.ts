@@ -1,9 +1,10 @@
 import { env } from '../src/config/env.js';
-import { TelegramApiClient } from '../src/services/telegram-api.js';
+import { HttpTelegramClient } from '../src/services/telegram-api.js';
 
 async function main(): Promise<void> {
+  const telegram = HttpTelegramClient.getInstance();
   try {
-    const me = await TelegramApiClient.getMe(env.BOT_TOKEN);
+    const me = await telegram.getMe(env.BOT_TOKEN);
     console.log('Bot info:');
     console.log(`  ID: ${me.id}`);
     console.log(`  Name: ${me.first_name}`);
