@@ -1,11 +1,12 @@
 import { Router, type Router as RouterType } from 'express';
+import { z } from 'zod';
 import { verifyTelegramAuth } from '../services/telegram-auth.js';
-import { issueAccessToken } from '../services/session.js';
+import { issueAccessToken, issueRefreshToken, verifyRefreshToken } from '../services/session.js';
 import * as userQueries from '../db/queries/users.js';
 import { env } from '../config/env.js';
 import { AuthenticationError, ValidationError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import type { TelegramLoginRequest, AuthResponse } from '../types/api.js';
+import type { TelegramLoginRequest, AuthResponse, RefreshRequest, RefreshResponse } from '../types/api.js';
 
 export const authRouter: RouterType = Router();
 
@@ -70,6 +71,7 @@ authRouter.post<never, AuthResponse | { ok: false; error: string }, TelegramLogi
     };
 
     const accessToken = issueAccessToken(authUser);
+    const refreshToken = issueRefreshToken(authUser);
 
     // Sanitize username: Telegram usernames are [a-zA-Z0-9_], 5–32 chars.
     // Strip anything outside that set before embedding in the deep-link URL.
@@ -80,7 +82,7 @@ authRouter.post<never, AuthResponse | { ok: false; error: string }, TelegramLogi
     const suggestedUsername = `${safeUsername}_animoca_bot`;
     const deepLink = `https://t.me/newbot/${env.BOT_USERNAME}/${suggestedUsername}?name=${encodeURIComponent(data.first_name + "'s AI Agent")}`;
 
-    logger.debug({ userId: user.id, telegramId, deepLink }, 'Access token issued, sending auth response');
+    logger.debug({ userId: user.id, telegramId, deepLink }, 'Access + refresh tokens issued, sending auth response');
 
     res.json({
       ok: true,
@@ -93,7 +95,43 @@ authRouter.post<never, AuthResponse | { ok: false; error: string }, TelegramLogi
         photoUrl: user.photo_url ?? undefined,
       },
       accessToken,
+      refreshToken,
       deepLink,
     });
+  },
+);
+
+const refreshBodySchema = z.object({ refreshToken: z.string().min(1) });
+
+authRouter.post<never, RefreshResponse | { ok: false; error: string; code: string }, RefreshRequest>(
+  '/refresh',
+  async (req, res) => {
+    const parsed = refreshBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AuthenticationError('Missing or invalid refreshToken');
+    }
+
+    const { refreshToken } = parsed.data;
+    logger.debug('POST /api/auth/refresh received');
+
+    const payload = verifyRefreshToken(refreshToken);
+
+    const userRow = await userQueries.findUserById(payload.sub);
+    if (!userRow) {
+      logger.warn({ userId: payload.sub }, 'POST /api/auth/refresh: user not found');
+      throw new AuthenticationError('User not found');
+    }
+
+    const authUser = {
+      id: userRow.id,
+      telegramId: userRow.telegram_id,
+      firstName: userRow.first_name,
+      username: userRow.username ?? undefined,
+    };
+
+    const accessToken = issueAccessToken(authUser);
+    logger.info({ userId: userRow.id, telegramId: userRow.telegram_id }, 'Access token refreshed');
+
+    res.json({ ok: true, accessToken });
   },
 );

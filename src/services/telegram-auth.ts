@@ -50,8 +50,8 @@ export function verifyTelegramAuth(data: TelegramAuthData, botToken: string): bo
     logger.warn({ telegramId: data.id, ageSeconds }, 'verifyTelegramAuth: auth_date is too far in the future');
     return false;
   }
-  if (ageSeconds > 86400) {
-    logger.warn({ telegramId: data.id, ageSeconds }, 'verifyTelegramAuth: auth_date too old (>24h)');
+  if (ageSeconds > 300) {
+    logger.warn({ telegramId: data.id, ageSeconds }, 'verifyTelegramAuth: auth_date too old (>5min)');
     return false;
   }
 

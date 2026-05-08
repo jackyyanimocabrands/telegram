@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
-import { AppError } from '../utils/errors.js';
+import { AppError, AuthenticationError } from '../utils/errors.js';
 import type { AuthenticatedUser } from '../types/api.js';
 
 const APP_ISSUER = 'animocamind-telegram-connector';
@@ -76,5 +76,84 @@ export function verifyAccessToken(token: string): AuthenticatedUser {
   } catch (err) {
     logger.debug({ err }, 'verifyAccessToken: verification failed');
     throw err;
+  }
+}
+
+export interface RefreshTokenPayload {
+  sub: number;
+  telegramId: number;
+  type: 'refresh';
+  ver: number;
+}
+
+/**
+ * Issue an ES256 refresh token.
+ * Payload includes `type: 'refresh'` to prevent an access token being used as a refresh token.
+ */
+export function issueRefreshToken(user: AuthenticatedUser): string {
+  logger.debug({ userId: user.id, telegramId: user.telegramId, ver: env.JWT_VERSION }, 'issueRefreshToken: signing');
+  try {
+    const payload = {
+      sub: user.id,
+      telegramId: user.telegramId,
+      type: 'refresh' as const,
+      ver: env.JWT_VERSION,
+    };
+    const token = jwt.sign(payload, env.ES256_PRIVATE_KEY, {
+      algorithm: 'ES256',
+      expiresIn: env.JWT_REFRESH_EXPIRES_IN,
+      issuer: APP_ISSUER,
+      audience: APP_ISSUER,
+    });
+    logger.debug({ userId: user.id }, 'issueRefreshToken: signed successfully');
+    return token;
+  } catch (err) {
+    logger.error({ err, userId: user.id }, 'issueRefreshToken: failed to sign token');
+    throw err;
+  }
+}
+
+/**
+ * Verify an ES256 refresh token.
+ * Throws AuthenticationError if signature invalid, expired, wrong type, or version mismatch.
+ */
+export function verifyRefreshToken(token: string): RefreshTokenPayload {
+  try {
+    const decoded = jwt.verify(token, env.ES256_PUBLIC_KEY, {
+      algorithms: ['ES256'],
+      issuer: APP_ISSUER,
+      audience: APP_ISSUER,
+    }) as jwt.JwtPayload;
+
+    if (decoded.type !== 'refresh') {
+      logger.warn({ userId: decoded.sub, type: decoded.type }, 'verifyRefreshToken: wrong token type');
+      throw new AuthenticationError('Invalid token type');
+    }
+
+    if (decoded.ver !== env.JWT_VERSION) {
+      logger.warn({ userId: decoded.sub, tokenVer: decoded.ver, envVer: env.JWT_VERSION }, 'verifyRefreshToken: token version mismatch — token invalidated');
+      throw new AuthenticationError('Token version mismatch');
+    }
+
+    const id = parseInt(decoded.sub as string, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new AuthenticationError('Invalid token subject');
+    }
+
+    if (!Number.isFinite(decoded.telegramId as number) || (decoded.telegramId as number) <= 0) {
+      throw new AuthenticationError('Invalid token telegramId claim');
+    }
+
+    logger.debug({ userId: id }, 'verifyRefreshToken: valid');
+    return {
+      sub: id,
+      telegramId: decoded.telegramId as number,
+      type: 'refresh',
+      ver: decoded.ver as number,
+    };
+  } catch (err) {
+    if (err instanceof AuthenticationError) throw err;
+    logger.debug({ err }, 'verifyRefreshToken: verification failed');
+    throw new AuthenticationError('Invalid or expired refresh token');
   }
 }

@@ -44,7 +44,17 @@ export interface AuthResponse {
     photoUrl?: string;
   };
   accessToken: string;
+  refreshToken: string;
   deepLink: string;
+}
+
+export interface RefreshRequest {
+  refreshToken: string;
+}
+
+export interface RefreshResponse {
+  ok: true;
+  accessToken: string;
 }
 
 export interface BotStatusResponse {

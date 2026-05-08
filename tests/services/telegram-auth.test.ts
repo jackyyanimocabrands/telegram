@@ -46,8 +46,8 @@ describe('verifyTelegramAuth', () => {
     expect(verifyTelegramAuth(data, BOT_TOKEN)).to.be.false;
   });
 
-  it('returns false when auth_date is too old (> 24h)', () => {
-    const oldDate = String(Math.floor(Date.now() / 1000) - 90000);
+  it('returns false when auth_date is too old (> 5min)', () => {
+    const oldDate = String(Math.floor(Date.now() / 1000) - 600);
     const data = makeValidAuthData({ auth_date: oldDate });
     expect(verifyTelegramAuth(data, BOT_TOKEN)).to.be.false;
   });

@@ -17,6 +17,7 @@ const envSchema = z.object({
   ES256_PRIVATE_KEY: z.string().min(1, 'ES256_PRIVATE_KEY is required'),
   ES256_PUBLIC_KEY: z.string().min(1, 'ES256_PUBLIC_KEY is required'),
   JWT_EXPIRES_IN: z.coerce.number().int().positive().default(2592000), // 30 days in seconds
+  JWT_REFRESH_EXPIRES_IN: z.coerce.number().int().positive().default(604800), // 7 days in seconds
   JWT_VERSION: z.coerce.number().int().positive().default(1),
   CORS_ORIGINS: z.string().optional(), // comma-separated, empty/absent = allow all in dev, deny in prod
   HOST: z.string().default('0.0.0.0'),

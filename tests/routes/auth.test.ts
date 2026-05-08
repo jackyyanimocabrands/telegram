@@ -62,13 +62,14 @@ describe('auth routes', () => {
   });
 
   describe('POST /api/auth/telegram', () => {
-    it('returns 200 with user, accessToken, and deepLink on valid auth', async () => {
+     it('returns 200 with user, accessToken, refreshToken, and deepLink on valid auth', async () => {
       const res = await request(app)
         .post('/api/auth/telegram')
         .send(makeValidBody());
       expect(res.status).to.equal(200);
       expect(res.body).to.have.property('ok', true);
       expect(res.body).to.have.property('accessToken').that.is.a('string');
+      expect(res.body).to.have.property('refreshToken').that.is.a('string');
       expect(res.body).to.have.property('deepLink').that.is.a('string');
       expect(res.body.user).to.have.property('telegramId', 99887766);
     });
