@@ -189,9 +189,9 @@ function verifyTelegramAuth(data, botToken) {
   // 4. Validate hash
   if (computedHash !== hash) return false;
 
-  // 5. Reject auth_date older than 24 hours (prevent replay attacks)
+  // 5. Reject auth_date older than 5 minutes (prevent replay attacks)
   const age = Math.floor(Date.now() / 1000) - parseInt(fields.auth_date, 10);
-  if (age > 86400) return false;
+  if (age > 300) return false;
 
   return true;
 }
@@ -1241,7 +1241,7 @@ const childBotRecord = {
 | Bot Management Mode is manual | Must be enabled through BotFather Mini App — no API method to toggle it |
 | Bot-to-Bot Communication Mode is manual | Must be enabled through BotFather Mini App — no API method to toggle it |
 | Domain binding required | The Login Widget only works on domains registered with `/setdomain` in BotFather |
-| `auth_date` not enforced by Telegram | Your backend must reject stale tokens (recommended: 24h window) |
+| `auth_date` not enforced by Telegram | Your backend must reject stale tokens (recommended: 5 min window) |
 | Webhook ports | Only ports `443`, `80`, `88`, and `8443` are accepted by Telegram |
 | Manager bot capability | The manager bot must have `can_manage_bots: true` — enabled in BotFather Mini App |
 | Bot username rules | Usernames must be unique across Telegram, 5–32 chars, must end in `bot` |
