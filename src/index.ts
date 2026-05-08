@@ -25,7 +25,20 @@ app.set('trust proxy', 1);
 
 // B-3: Security headers — FIRST middleware so every response is hardened before
 // CORS, body parsing, or any route handler runs.
-app.use(helmet());
+// Telegram Login Widget (telegram.org, t.me) must be allowed to load and POST.
+// unsafe-inline is acceptable for this static login page only.
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https://telegram.org', 'https://*.telegram.org'],
+      frameSrc: ["'self'", 'https://telegram.org', 'https://*.telegram.org'],
+      connectSrc: ["'self'", 'https://telegram.org', 'https://*.telegram.org'],
+      imgSrc: ["'self'", 'data:', 'https://t.me', 'https://*.telegram.org'],
+      fontSrc: ["'self'", 'https://telegram.org', 'https://*.telegram.org'],
+    },
+  },
+}));
 
 // CORS — configurable origins
 const corsOrigins = getCorsOrigins();

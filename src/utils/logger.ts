@@ -3,13 +3,14 @@ import { env } from '../config/env.js';
 
 export const logger = pino({
   level: env.LOG_LEVEL,
-  ...(env.NODE_ENV === 'development' && {
+  ...(env.NODE_ENV !== 'production' && {
     transport: {
       target: 'pino-pretty',
       options: {
         colorize: true,
         translateTime: 'HH:MM:ss.l',
         ignore: 'pid,hostname',
+        singleLine: true,
       },
     },
   }),
@@ -26,8 +27,7 @@ export const logger = pino({
 });
 
 /**
- * Flush the logger then exit. Required when using pino-pretty transport
- * (runs in a worker thread) — process.exit() without flush drops buffered logs.
+ * Flush the logger then exit.
  */
 export function fatalExit(code: number = 1): void {
   logger.flush(() => process.exit(code));
