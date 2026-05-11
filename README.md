@@ -51,6 +51,7 @@ A service that enables users to **login with Telegram** and automatically provis
   - [Warm Prompt Generation](#warm-prompt-generation)
   - [New Environment Variables](#new-environment-variables)
   - [Model Registry](#model-registry)
+  - [LLM Failure Handling & Fallback Provider](#llm-failure-handling--fallback-provider)
 - [API Reference](#api-reference)
 - [Limitations](#limitations)
 
@@ -1451,6 +1452,8 @@ The following variables are required or recommended when the AI agent layer is e
 | `DEFAULT_LLM_MODEL` | No | `gpt-4o` | Default model for new conversations. Must be a model supported by `DEFAULT_LLM_PROVIDER`. |
 | `DEFAULT_SUMMARIZATION_PROVIDER` | No | `openai` | Default provider used for context summarization. Can differ from `DEFAULT_LLM_PROVIDER`. |
 | `DEFAULT_SUMMARIZATION_MODEL` | No | `gpt-4o-mini` | Default model used for context summarization. Typically a cheaper/faster model than the conversation model. |
+| `FALLBACK_LLM_PROVIDER` | No | — | Provider to use when the primary LLM call fails. If unset, no fallback is attempted. |
+| `FALLBACK_LLM_MODEL` | No | — | Model to use with the fallback provider. Must be supported by `FALLBACK_LLM_PROVIDER`. |
 
 ---
 
@@ -1468,6 +1471,70 @@ The model registry (`src/services/llm/model-registry.ts`) maps model identifiers
 | Anthropic | `claude-3-opus-20240229` | 200,000 |
 
 > Models not present in the registry fall back to a conservative default of 4,096 tokens. Add new models to the registry as providers release them.
+
+---
+
+### LLM Failure Handling & Fallback Provider
+
+When a call to the primary LLM provider fails (network error, API error, rate limit, model unavailable), `AgentService` automatically retries once using a configurable fallback provider before surfacing an error to the user.
+
+#### Fallback Flow
+
+```
+AgentService.chat()
+      ↓
+LlmProvider.complete(messages)     ← primary provider
+      ↓ success → return reply
+      ↓ error
+      ↓
+Fallback configured?
+  No  → send user "I'm having trouble connecting right now. Please try again in a moment."
+  Yes → LlmProviderFactory.create(FALLBACK_LLM_PROVIDER, FALLBACK_LLM_MODEL)
+              ↓
+        LlmProvider.complete(messages)  ← fallback provider
+              ↓ success → return reply (log: primary failed, fallback used)
+              ↓ error
+              ↓
+        send user "I'm having trouble connecting right now. Please try again in a moment."
+```
+
+#### Configuration
+
+Two optional environment variables control fallback behaviour:
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `FALLBACK_LLM_PROVIDER` | No | — | Provider to use when the primary LLM call fails. If not set, no fallback is attempted. Accepted values: `openai`, `anthropic`. |
+| `FALLBACK_LLM_MODEL` | No | — | Model to use with the fallback provider. Must be a model supported by `FALLBACK_LLM_PROVIDER`. |
+
+#### Behaviour Rules
+
+- Fallback is applied at the `AgentService` level — it wraps every `LlmProvider.complete()` call (conversation replies and warm prompt generation).
+- Summarization failures are handled separately: a summarization error is logged and the summarization step is skipped for that turn. The conversation continues without compressing old messages. No fallback LLM call is made for summarization failures.
+- The fallback provider/model does **not** override the conversation's stored `llm_provider`/`llm_model` columns. If fallback is used, the next successful turn will use the original primary provider again.
+- Both primary and fallback failures are logged with provider name, model, and error code for observability.
+
+#### Recommended Configuration
+
+```
+# Primary: GPT-4o for quality replies
+DEFAULT_LLM_PROVIDER=openai
+DEFAULT_LLM_MODEL=gpt-4o
+
+# Fallback: Claude Haiku for resilience
+FALLBACK_LLM_PROVIDER=anthropic
+FALLBACK_LLM_MODEL=claude-3-5-haiku-20241022
+```
+
+Or the inverse — primary on Anthropic, fallback on OpenAI:
+
+```
+DEFAULT_LLM_PROVIDER=anthropic
+DEFAULT_LLM_MODEL=claude-3-5-sonnet-20241022
+
+FALLBACK_LLM_PROVIDER=openai
+FALLBACK_LLM_MODEL=gpt-4o-mini
+```
 
 ---
 
@@ -1526,11 +1593,14 @@ The model registry (`src/services/llm/model-registry.ts`) maps model identifiers
 
 ### Internal Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/auth/telegram` | `POST` | Receives and verifies Telegram Login Widget auth data |
-| `/webhook/telegram` | `POST` | Receives manager bot updates (`managed_bot`, `message`, etc.) |
-| `/webhook/bot/:botId` | `POST` | Receives individual child bot updates (one per child) |
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/auth/config` | `GET` | None | Returns the manager bot username and Telegram Login Widget config |
+| `/api/auth/telegram` | `POST` | None | Verifies Telegram Login Widget auth data; returns `accessToken`, `refreshToken`, and managed bot deep link |
+| `/api/auth/refresh` | `POST` | Refresh token (body) | Exchanges a valid refresh token for a new access token |
+| `/api/bots/mine` | `GET` | Bearer access token | Returns the authenticated user's managed bot record (status, username, bot ID) |
+| `/webhook/telegram` | `POST` | Webhook secret header | Receives manager bot updates (`managed_bot`, `message`, etc.) |
+| `/webhook/bot/:botId` | `POST` | Per-bot webhook secret header | Receives individual child bot updates (one per child) |
 
 ### Child Bot — In-Chat Commands
 
