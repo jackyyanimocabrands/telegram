@@ -42,6 +42,15 @@ A service that enables users to **login with Telegram** and automatically provis
   - [Limits and Quotas](#limits-and-quotas)
   - [What the Manager Cannot Do](#what-the-manager-cannot-do)
 - [Full User Journey](#full-user-journey)
+- [AI Agent Architecture](#ai-agent-architecture)
+  - [Overview](#overview-1)
+  - [AI Engine Layers](#ai-engine-layers)
+  - [Manager Bot — Two Modes](#manager-bot--two-modes)
+  - [Child Bot — Personal AI Agent](#child-bot--personal-ai-agent)
+  - [Context Management](#context-management)
+  - [Warm Prompt Generation](#warm-prompt-generation)
+  - [New Environment Variables](#new-environment-variables)
+  - [Model Registry](#model-registry)
 - [API Reference](#api-reference)
 - [Limitations](#limitations)
 
@@ -1169,6 +1178,299 @@ const childBotRecord = {
 
 ---
 
+## AI Agent Architecture
+
+### Overview
+
+The system has two levels of bots:
+
+- **Manager bot** (`@hellominds_bot`) — platform-level bot. Single instance. Handles onboarding for users who have not yet provisioned a child bot, and acts as a settings/billing assistant for users whose child bot is already live.
+- **Child bots** — one per user. Each is a personal AI agent, provisioned dynamically via the Managed Bots API.
+
+Both levels share the same AI engine (`AgentService`). The only difference between them is the **system prompt** passed to the LLM on each call.
+
+---
+
+### AI Engine Layers
+
+The AI stack is composed of five layers that collaborate to produce a reply for every incoming Telegram message.
+
+#### 1. LLM Provider Layer (`src/services/llm/`)
+
+Abstracts away provider-specific APIs behind a single interface.
+
+| Component | Responsibility |
+|-----------|---------------|
+| `LlmProvider` interface | Defines `complete(messages, options) → string` — the only method any consumer calls |
+| `OpenAiProvider` | Implements `LlmProvider` using the OpenAI Chat Completions API |
+| `AnthropicProvider` | Implements `LlmProvider` using the Anthropic Messages API |
+| `LlmProviderFactory` | Resolves a concrete `LlmProvider` from a provider name + model string at runtime |
+| `model-registry.ts` | Maps model names to their maximum context window sizes (e.g. `gpt-4o: 128000`, `claude-3-5-sonnet-20241022: 200000`) |
+| `token-estimator.ts` | Estimates token count using the `chars ÷ 4` heuristic — fast and allocation-free |
+
+#### 2. Conversation Service (`src/services/conversation.ts`)
+
+Manages persistent conversation state per `(bot_id, telegram_user_id)` pair.
+
+- **Loads** the conversation row from PostgreSQL on every request (system prompt, summary, message history, provider/model config).
+- **Assembles** the full message array sent to the LLM in this order:
+  ```
+  [system prompt] + [summary message] + [recent messages] + [new user message]
+  ```
+- **Triggers summarization** when the estimated token count of the assembled context exceeds `floor(model.maxTokens / 10)`.
+- **Saves** the updated message list and any new summary back to PostgreSQL after the LLM responds.
+
+#### 3. Summarization Service (`src/services/summarization.ts`)
+
+Compresses old conversation history to stay within the context budget.
+
+- Uses its own configurable LLM provider and model — these can differ from the conversation model (e.g. a cheaper/faster model such as `gpt-4o-mini` for summarization while the conversation uses `gpt-4o`).
+- When triggered:
+  1. Takes the oldest 50% of messages.
+  2. Asks the LLM to summarize them concisely, preserving key facts about the user.
+  3. Stores the result in `conversations.summary`.
+  4. Replaces the summarized messages with the new summary, keeping only the newer 50% in `conversations.messages`.
+
+#### 4. Agent Service (`src/services/agent.ts`)
+
+Central orchestrator. Exposes the public API consumed by bot handlers.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `chat` | `(botId, telegramUserId, userMessage, systemPrompt) → string` | Main entry point. Loads context, calls LLM, saves context, returns reply. |
+| `clearContext` | `(botId, telegramUserId) → void` | Wipes `messages` and `summary`. Preserves `system_prompt`. |
+| `switchProvider` | `(botId, telegramUserId, provider, model) → void` | Updates `llm_provider` and `llm_model` for the conversation row. |
+| `generateWarmPrompt` | `(managerBotId, ownerTelegramId) → string` | Reads the user's onboarding conversation and asks the LLM to distil it into a concise system prompt. |
+
+**`chat()` execution flow:**
+
+1. Load conversation context from PostgreSQL.
+2. Assemble messages: `[system] + [summary] + [history] + [new user message]`.
+3. Call `LlmProviderFactory → LlmProvider.complete(messages)`.
+4. Receive the LLM response.
+5. Estimate total token count — if it exceeds the budget, call `SummarizationService.summarize()`.
+6. Save updated context to PostgreSQL.
+7. Return the reply string to the bot handler.
+
+#### 5. Bot Handlers (updated `src/index.ts` and `src/services/child-bot.ts`)
+
+The thin layer that bridges Telegram updates and the AI engine.
+
+- Resolves the correct **system prompt** for the bot and user (see [Manager Bot — Two Modes](#manager-bot--two-modes) and [Child Bot — Personal AI Agent](#child-bot--personal-ai-agent)).
+- Calls `AgentService.chat(botId, userId, message, systemPrompt)`.
+- Sends the reply back to the user via `telegram.sendMessage()`.
+
+#### Flow Diagram
+
+```
+Telegram Update
+      ↓
+Bot Handler (manager or child)
+      ↓  resolves system prompt
+AgentService.chat(botId, userId, message, systemPrompt)
+      ↓
+ConversationService — load context
+      ↓  assembles [system] + [summary] + [history] + [new message]
+LlmProviderFactory → LlmProvider.complete(messages)
+      ↓  response
+      ↓  if tokens > budget → SummarizationService.summarize()
+ConversationService — save context
+      ↓
+Bot Handler → sendMessage to Telegram
+```
+
+---
+
+### Manager Bot — Two Modes
+
+The manager bot behaves differently depending on whether the user has an active child bot.
+
+#### Onboarding Mode
+
+Applies when the user has no active child bot (`status` is `None`, `PENDING`, or `PROVISIONING`).
+
+The manager bot acts as a conversational onboarding assistant. It answers questions about Animocamind and guides the user toward creating their personal bot.
+
+**System prompt used:**
+
+```
+You are an onboarding assistant for Animocamind. Help the user understand what
+Animocamind does and guide them to create their personal AI agent bot. When the
+time is right, share this deep link with them: [deepLink]. Be conversational,
+helpful, and answer any questions they have.
+```
+
+**Bot status → mode mapping:**
+
+| User's bot status | Manager bot mode |
+|-------------------|-----------------|
+| None | Onboarding — send deep link guidance |
+| `PENDING` | Onboarding — "Your bot is being set up, hang tight!" |
+| `PROVISIONING` | Onboarding — "Your bot is being set up, hang tight!" |
+| `ACTIVE` | Settings/billing assistant |
+
+#### Settings/Billing Mode
+
+Applies when the user has an `ACTIVE` child bot.
+
+The manager bot steps back from onboarding and becomes a concise platform assistant for account settings, billing, and platform-level questions. General conversation is handled by the user's personal child bot.
+
+**System prompt used:**
+
+```
+You are Animocamind's platform assistant for [firstName]. Their personal AI agent
+@[botUsername] is live and handles general conversations. Your role is to help with
+account settings, billing, and platform-level questions. Be concise and direct.
+```
+
+---
+
+### Child Bot — Personal AI Agent
+
+Each child bot is a fully independent AI agent with its own persistent context, system prompt, and provider configuration.
+
+#### Warm Prompt
+
+Each child bot starts with a **warm prompt** seeded at provisioning time. The warm prompt is LLM-generated from the user's onboarding conversation with the manager bot — it captures what the system learned about the user (name, interests, tone, goals).
+
+- Stored in `conversations.system_prompt`.
+- Persists permanently — it is never overwritten by normal operation.
+- Prepended to every LLM call made on behalf of this child bot.
+
+See [Warm Prompt Generation](#warm-prompt-generation) for how it is produced.
+
+#### Child Bot Commands
+
+| Command | Behaviour |
+|---------|-----------|
+| `/start` | Greet the user and explain what the bot can do |
+| `/help` | Show available commands |
+| `/clear` | Wipe conversation history and summary (full reset). The warm prompt (`system_prompt`) is preserved. |
+| `/provider <name> [model]` | Switch LLM provider for this conversation. Examples: `/provider openai gpt-4o`, `/provider anthropic claude-3-5-sonnet-20241022` |
+
+---
+
+### Context Management
+
+#### Storage
+
+Conversation state is persisted in a PostgreSQL `conversations` table (introduced in migration `011`).
+
+**Full schema:**
+
+```sql
+CREATE TABLE conversations (
+  id                      SERIAL PRIMARY KEY,
+  bot_id                  TEXT NOT NULL,
+  telegram_user_id        BIGINT NOT NULL,
+  llm_provider            TEXT NOT NULL DEFAULT 'openai',
+  llm_model               TEXT NOT NULL DEFAULT 'gpt-4o',
+  summarization_provider  TEXT NOT NULL DEFAULT 'openai',
+  summarization_model     TEXT NOT NULL DEFAULT 'gpt-4o-mini',
+  messages                JSONB NOT NULL DEFAULT '[]',
+  summary                 TEXT,
+  system_prompt           TEXT,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (bot_id, telegram_user_id)
+);
+```
+
+#### Context Window Budget
+
+```
+budget = floor(model.maxTokens / 10)
+```
+
+For example, with `gpt-4o` (128,000 tokens), the budget is **12,800 estimated tokens**. This keeps the assembled context well clear of the model's hard limit and leaves ample headroom for the LLM's output.
+
+#### Summarization Trigger
+
+When the estimated token count of the assembled context exceeds the budget, `SummarizationService` is invoked:
+
+1. The oldest 50% of messages are extracted.
+2. A summarization LLM call produces a concise summary preserving key facts about the user.
+3. The summary is stored in `conversations.summary`.
+4. The summarized messages are removed from `conversations.messages`.
+
+On the next turn, the assembled context becomes: `[system] + [summary message] + [remaining messages] + [new message]`.
+
+#### Context Isolation
+
+Each `(bot_id, telegram_user_id)` pair has its own isolated row in the `conversations` table:
+
+- Person A's context with the manager bot is completely separate from Person B's context with the manager bot.
+- Person A's context with the manager bot is completely separate from Person A's context with their child bot.
+- No cross-contamination is possible by design.
+
+#### Context Lifetime
+
+Context is permanent. The only way to reset it is the `/clear` command, which:
+
+- Sets `messages` to `[]`
+- Sets `summary` to `NULL`
+- **Preserves** `system_prompt` (the warm prompt)
+
+#### Session-Level Provider Switching
+
+Each conversation row stores four provider/model columns:
+
+| Column | Default | Description |
+|--------|---------|-------------|
+| `llm_provider` | `openai` | Provider used for conversation replies |
+| `llm_model` | `gpt-4o` | Model used for conversation replies |
+| `summarization_provider` | `openai` | Provider used for context summarization |
+| `summarization_model` | `gpt-4o-mini` | Model used for context summarization |
+
+Defaults are taken from environment variables at conversation creation time. The `/provider` command updates `llm_provider` and `llm_model` for the current conversation row without affecting other users.
+
+---
+
+### Warm Prompt Generation
+
+When `ManagedBotService` successfully provisions a child bot (Phase 3 of provisioning), it generates and seeds a warm prompt for the new child bot:
+
+1. **Load** the user's onboarding conversation with the manager bot from `conversations`.
+2. **Call** `AgentService.generateWarmPrompt(managerBotId, ownerTelegramId)`, which sends the conversation history to the LLM with a meta-instruction to produce a concise system prompt capturing everything the onboarding conversation revealed about the user.
+3. **Seed** the generated prompt into the child bot's `conversations` row as `system_prompt`. This row is created if it does not yet exist.
+4. **Every subsequent LLM call** for this child bot prepends this warm prompt as the system message.
+
+> **Note:** The child bot's context does **not** inherit the manager bot's message history. Only the distilled warm prompt is transferred. The child bot starts with an empty `messages` array.
+
+---
+
+### New Environment Variables
+
+The following variables are required or recommended when the AI agent layer is enabled. Add them to your `.env` file alongside the existing variables documented in [Prerequisites](#prerequisites).
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `OPENAI_API_KEY` | If using OpenAI | — | OpenAI API key. Required when `DEFAULT_LLM_PROVIDER` or `DEFAULT_SUMMARIZATION_PROVIDER` is `openai`. |
+| `ANTHROPIC_API_KEY` | If using Anthropic | — | Anthropic API key. Required when `DEFAULT_LLM_PROVIDER` or `DEFAULT_SUMMARIZATION_PROVIDER` is `anthropic`. |
+| `DEFAULT_LLM_PROVIDER` | No | `openai` | Default LLM provider for new conversations. Accepted values: `openai`, `anthropic`. |
+| `DEFAULT_LLM_MODEL` | No | `gpt-4o` | Default model for new conversations. Must be a model supported by `DEFAULT_LLM_PROVIDER`. |
+| `DEFAULT_SUMMARIZATION_PROVIDER` | No | `openai` | Default provider used for context summarization. Can differ from `DEFAULT_LLM_PROVIDER`. |
+| `DEFAULT_SUMMARIZATION_MODEL` | No | `gpt-4o-mini` | Default model used for context summarization. Typically a cheaper/faster model than the conversation model. |
+
+---
+
+### Model Registry
+
+The model registry (`src/services/llm/model-registry.ts`) maps model identifiers to their maximum context window sizes. The context budget is computed from these values.
+
+| Provider | Model | Max Tokens |
+|----------|-------|-----------|
+| OpenAI | `gpt-4o` | 128,000 |
+| OpenAI | `gpt-4o-mini` | 128,000 |
+| OpenAI | `gpt-4-turbo` | 128,000 |
+| Anthropic | `claude-3-5-sonnet-20241022` | 200,000 |
+| Anthropic | `claude-3-5-haiku-20241022` | 200,000 |
+| Anthropic | `claude-3-opus-20240229` | 200,000 |
+
+> Models not present in the registry fall back to a conservative default of 4,096 tokens. Add new models to the registry as providers release them.
+
+---
+
 ## API Reference
 
 ### Manager Bot — Lifecycle Methods
@@ -1229,6 +1531,17 @@ const childBotRecord = {
 | `/api/auth/telegram` | `POST` | Receives and verifies Telegram Login Widget auth data |
 | `/webhook/telegram` | `POST` | Receives manager bot updates (`managed_bot`, `message`, etc.) |
 | `/webhook/bot/:botId` | `POST` | Receives individual child bot updates (one per child) |
+
+### Child Bot — In-Chat Commands
+
+These commands are handled by the child bot's message handler and do not go through an HTTP endpoint.
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Greet the user and explain what the bot can do |
+| `/help` | Show available commands |
+| `/clear` | Wipe conversation history and summary. The warm prompt (`system_prompt`) is preserved. |
+| `/provider <name> [model]` | Switch the LLM provider and/or model for this conversation. Examples: `/provider openai gpt-4o`, `/provider anthropic claude-3-5-sonnet-20241022` |
 
 ---
 
