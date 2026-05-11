@@ -9,6 +9,8 @@ import {
   activateManagedBot,
   upsertManagedBot,
   updateManagedBotStatus,
+  findManagedBotByOwnerTelegramId,
+  findManagedBotByOwner,
 } from '../../../src/db/queries/managed-bots.js';
 import { ConflictError } from '../../../src/utils/errors.js';
 
@@ -105,6 +107,52 @@ describe('managed-bots queries', () => {
         status: 'PENDING',
       });
       expect(result).to.deep.equal(row);
+    });
+  });
+
+  describe('findManagedBotByOwnerTelegramId', () => {
+    it('returns a ManagedBotRow when query returns a row', async () => {
+      const row = { bot_id: 77, owner_telegram_id: 111, status: 'ACTIVE' };
+      queryStub.resolves({ rows: [row] });
+      const result = await findManagedBotByOwnerTelegramId(111);
+      expect(result).to.deep.equal(row);
+    });
+
+    it('returns null when query returns no rows', async () => {
+      queryStub.resolves({ rows: [] });
+      const result = await findManagedBotByOwnerTelegramId(111);
+      expect(result).to.be.null;
+    });
+
+    it('passes ownerTelegramId as the query parameter', async () => {
+      queryStub.resolves({ rows: [] });
+      await findManagedBotByOwnerTelegramId(999);
+      const [sql, params] = queryStub.firstCall.args;
+      expect(sql).to.include('owner_telegram_id');
+      expect(params).to.include(999);
+    });
+  });
+
+  describe('findManagedBotByOwner', () => {
+    it('returns a ManagedBotRow when query returns a row', async () => {
+      const row = { bot_id: 88, owner_telegram_id: 222, status: 'ACTIVE' };
+      queryStub.resolves({ rows: [row] });
+      const result = await findManagedBotByOwner(222);
+      expect(result).to.deep.equal(row);
+    });
+
+    it('returns null when query returns no rows', async () => {
+      queryStub.resolves({ rows: [] });
+      const result = await findManagedBotByOwner(222);
+      expect(result).to.be.null;
+    });
+
+    it('passes ownerTelegramId as the query parameter', async () => {
+      queryStub.resolves({ rows: [] });
+      await findManagedBotByOwner(777);
+      const [sql, params] = queryStub.firstCall.args;
+      expect(sql).to.include('owner_telegram_id');
+      expect(params).to.include(777);
     });
   });
 });

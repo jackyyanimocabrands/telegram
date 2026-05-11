@@ -32,6 +32,46 @@ const envSchema = z.object({
       }
       return val;
     }),
+  // LLM provider configuration
+  OPENAI_API_KEY: z.string().optional(),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  DEFAULT_LLM_PROVIDER: z.enum(['openai', 'anthropic']).default('openai'),
+  DEFAULT_LLM_MODEL: z.string().default('gpt-4o'),
+  DEFAULT_SUMMARIZATION_PROVIDER: z.enum(['openai', 'anthropic']).default('openai'),
+  DEFAULT_SUMMARIZATION_MODEL: z.string().default('gpt-4o-mini'),
+  FALLBACK_LLM_PROVIDER: z.enum(['openai', 'anthropic']).optional(),
+  FALLBACK_LLM_MODEL: z.string().optional(),
+}).superRefine((data, ctx) => {
+  // DEFAULT_LLM_PROVIDER key requirements
+  if (data.DEFAULT_LLM_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['OPENAI_API_KEY'], message: 'OPENAI_API_KEY is required when DEFAULT_LLM_PROVIDER is "openai"' });
+  }
+  if (data.DEFAULT_LLM_PROVIDER === 'anthropic' && !data.ANTHROPIC_API_KEY) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ANTHROPIC_API_KEY'], message: 'ANTHROPIC_API_KEY is required when DEFAULT_LLM_PROVIDER is "anthropic"' });
+  }
+  // DEFAULT_SUMMARIZATION_PROVIDER key requirements
+  if (data.DEFAULT_SUMMARIZATION_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['OPENAI_API_KEY'], message: 'OPENAI_API_KEY is required when DEFAULT_SUMMARIZATION_PROVIDER is "openai"' });
+  }
+  if (data.DEFAULT_SUMMARIZATION_PROVIDER === 'anthropic' && !data.ANTHROPIC_API_KEY) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ANTHROPIC_API_KEY'], message: 'ANTHROPIC_API_KEY is required when DEFAULT_SUMMARIZATION_PROVIDER is "anthropic"' });
+  }
+  // FALLBACK_LLM_PROVIDER and FALLBACK_LLM_MODEL must both be set or neither
+  const hasProvider = data.FALLBACK_LLM_PROVIDER !== undefined;
+  const hasModel = data.FALLBACK_LLM_MODEL !== undefined;
+  if (hasProvider && !hasModel) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FALLBACK_LLM_MODEL'], message: 'FALLBACK_LLM_MODEL is required when FALLBACK_LLM_PROVIDER is set' });
+  }
+  if (hasModel && !hasProvider) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FALLBACK_LLM_PROVIDER'], message: 'FALLBACK_LLM_PROVIDER is required when FALLBACK_LLM_MODEL is set' });
+  }
+  // FALLBACK_LLM_PROVIDER API key requirements
+  if (data.FALLBACK_LLM_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'OPENAI_API_KEY is required when FALLBACK_LLM_PROVIDER is openai', path: ['OPENAI_API_KEY'] });
+  }
+  if (data.FALLBACK_LLM_PROVIDER === 'anthropic' && !data.ANTHROPIC_API_KEY) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'ANTHROPIC_API_KEY is required when FALLBACK_LLM_PROVIDER is anthropic', path: ['ANTHROPIC_API_KEY'] });
+  }
 });
 
 export type Env = z.infer<typeof envSchema>;

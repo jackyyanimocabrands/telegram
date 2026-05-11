@@ -17,6 +17,11 @@ import { createChildBotHandler } from './services/child-bot.js';
 import { getDecryptedBotToken } from './services/token-store.js';
 import { HttpTelegramClient } from './services/telegram-api.js';
 import * as managedBotQueries from './db/queries/managed-bots.js';
+import { AgentService } from './services/agent.js';
+import { ConversationService } from './services/conversation.js';
+import { SummarizationService } from './services/summarization.js';
+import { LlmProviderFactory } from './services/llm/factory.js';
+import { handleManagerBotMessage } from './services/manager-bot.js';
 
 const app = express();
 
@@ -80,7 +85,14 @@ async function start(): Promise<void> {
     // ── BotRegistry setup ──
     const telegram = new HttpTelegramClient();
     const registry = new BotRegistry(telegram);
-    const managedBotService = new ManagedBotService(registry, telegram);
+
+    // ── AI agent layer setup ──
+    const factory = new LlmProviderFactory();
+    const conversationService = new ConversationService();
+    const summarizationService = new SummarizationService(factory);
+    const agentService = new AgentService(conversationService, summarizationService, factory);
+
+    const managedBotService = new ManagedBotService(registry, telegram, agentService);
 
     // Register manager bot
     registry.registerBot({
@@ -95,9 +107,14 @@ async function start(): Promise<void> {
           logger.info({ updateId: update.update_id, botId: update.managed_bot.bot?.id }, 'Processing managed_bot update');
           await managedBotService.handleManagedBotUpdated(update.update_id, update.managed_bot);
         } else if (update.message) {
-          logger.info(
-            { updateId: update.update_id, from: update.message.from?.id, text: update.message.text },
-            'Manager bot received message',
+          await handleManagerBotMessage(
+            update.message,
+            telegram,
+            agentService,
+            env.BOT_TOKEN,
+            'manager',
+            env.BASE_URL,
+            env.BOT_USERNAME,
           );
         } else {
           logger.debug({ updateId: update.update_id }, 'Manager bot: unhandled update type, ignoring');
@@ -124,7 +141,7 @@ async function start(): Promise<void> {
         webhookUrl: `${env.BASE_URL}/webhook/bot/${bot.bot_id}`,
         webhookSecret: env.CHILD_WEBHOOK_SECRET,
         initialOffset: bot.polling_offset ?? 0,
-        handler: createChildBotHandler(bot.bot_id),
+        handler: createChildBotHandler(bot.bot_id, agentService),
       });
     }
 

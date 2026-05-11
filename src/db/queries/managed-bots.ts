@@ -86,6 +86,28 @@ export async function findManagedBotByOwnerTelegramId(
   return bot;
 }
 
+/**
+ * Find the managed bot belonging to a given owner (by Telegram user id).
+ * Prefers the most recent ACTIVE bot; falls back to any row ordered by most recent.
+ * Returns null if the owner has no bots.
+ */
+export async function findManagedBotByOwner(ownerTelegramId: number): Promise<ManagedBotRow | null> {
+  const result = await pool.query<ManagedBotRow>(
+    `SELECT * FROM managed_bots
+     WHERE owner_telegram_id = $1
+     ORDER BY
+       CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END,
+       created_at DESC
+     LIMIT 1`,
+    [ownerTelegramId],
+  );
+  const bot = result.rows[0] ?? null;
+  if (!bot) {
+    logger.debug({ ownerTelegramId }, 'findManagedBotByOwner: not found');
+  }
+  return bot;
+}
+
 export async function updateManagedBotStatus(botId: number, status: ManagedBotStatus): Promise<void> {
   logger.debug({ botId, status }, 'updateManagedBotStatus');
   await pool.query(

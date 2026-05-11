@@ -4,6 +4,7 @@ import { provisionChildBot, createChildBotHandler } from './child-bot.js';
 import * as managedBotQueries from '../db/queries/managed-bots.js';
 import * as userQueries from '../db/queries/users.js';
 import * as webhookLogQueries from '../db/queries/webhook-log.js';
+import { setConversationSystemPrompt } from '../db/queries/conversations.js';
 import { invalidateBotTokenCache, invalidateBotWebhookSecretCache } from './token-store.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
@@ -11,11 +12,13 @@ import { ConflictError } from '../utils/errors.js';
 import { randomBytes } from 'node:crypto';
 import type { ManagedBotUpdated } from '../types/telegram.js';
 import type { BotRegistry } from './bot-registry.js';
+import type { AgentService } from './agent.js';
 
 export class ManagedBotService {
   constructor(
     private readonly registry: BotRegistry,
     private readonly telegram: TelegramClient,
+    private readonly agentService: AgentService,
   ) {}
 
   /**
@@ -91,11 +94,29 @@ export class ManagedBotService {
       );
 
       // Phase 2: Telegram API calls — profile + commands (transport is registry's responsibility)
-      await provisionChildBot(rotatedToken, bot.id, user.first_name);
+      // Sanitize first_name before use: strip non-safe characters, cap length, guarantee non-empty.
+      const safeName = (user.first_name ?? 'User')
+        .replace(/[^a-zA-Z0-9 \-']/g, '')
+        .slice(0, 50)
+        .trim() || 'User';
+      await provisionChildBot(rotatedToken, bot.id, safeName);
 
-      // Phase 3: activate + register
+      // Phase 3a: activate
       const updateMode = env.MANAGER_UPDATE_MODE; // child bots inherit manager's update mode
       await managedBotQueries.activateManagedBot(bot.id, updateMode);
+
+      // Phase 3b: Generate and seed warm prompt into child bot's conversation
+      try {
+        const warmPrompt = await this.agentService.generateWarmPrompt('manager', user.id);
+        if (warmPrompt) {
+          // warmPrompt === '' means no history; null means generation failed — both are falsy, skip seeding
+          await setConversationSystemPrompt(String(bot.id), user.id, warmPrompt);
+          logger.info({ botId: bot.id }, 'handleManagedBotUpdated: warm prompt seeded');
+        }
+      } catch (err) {
+        // Warm prompt seeding failure must NOT block activation
+        logger.warn({ err, botId: bot.id }, 'handleManagedBotUpdated: warm prompt generation failed, continuing without');
+      }
 
       const childWebhookUrl = `${env.BASE_URL}/webhook/bot/${bot.id}`;
       this.registry.registerBot({
@@ -105,7 +126,7 @@ export class ManagedBotService {
         allowedUpdates: ['message', 'callback_query'],
         webhookUrl: childWebhookUrl,
         webhookSecret,
-        handler: createChildBotHandler(bot.id),
+        handler: createChildBotHandler(bot.id, this.agentService),
       });
 
       await webhookLogQueries.markProcessed(logEntry.id);

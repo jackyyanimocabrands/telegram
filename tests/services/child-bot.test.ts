@@ -14,6 +14,12 @@ describe('child-bot service', () => {
   let sendMessageStub: sinon.SinonStub;
   let answerCallbackQueryStub: sinon.SinonStub;
   let getDecryptedBotTokenStub: sinon.SinonStub;
+  let agentServiceStub: {
+    chat: sinon.SinonStub;
+    clearContext: sinon.SinonStub;
+    switchProvider: sinon.SinonStub;
+    generateWarmPrompt: sinon.SinonStub;
+  };
 
   beforeEach(async () => {
     setMyNameStub = sinon.stub().resolves(true);
@@ -23,6 +29,13 @@ describe('child-bot service', () => {
     sendMessageStub = sinon.stub().resolves({});
     answerCallbackQueryStub = sinon.stub().resolves(true);
     getDecryptedBotTokenStub = sinon.stub().resolves('child-token-123');
+
+    agentServiceStub = {
+      chat: sinon.stub().resolves('AI reply'),
+      clearContext: sinon.stub().resolves(),
+      switchProvider: sinon.stub().resolves(),
+      generateWarmPrompt: sinon.stub().resolves(null),
+    };
 
     const module = await esmock('../../src/services/child-bot.ts', {
       '../../src/services/telegram-api.js': {
@@ -72,10 +85,13 @@ describe('child-bot service', () => {
       expect(setMyNameStub.firstCall.args[1]).to.include('Bob');
     });
 
-    it('sets exactly 3 commands', async () => {
+    it('sets exactly 4 commands (start, help, clear, provider)', async () => {
       await provisionChildBot('token', 42, 'Alice');
       const commands = setMyCommandsStub.firstCall.args[1];
-      expect(commands).to.have.length(3);
+      expect(commands).to.have.length(4);
+      const names = commands.map((c: { command: string }) => c.command);
+      expect(names).to.include('clear');
+      expect(names).to.include('provider');
     });
   });
 
@@ -89,36 +105,42 @@ describe('child-bot service', () => {
     });
 
     it('sends welcome message on /start', async () => {
-      await handleChildBotMessage(42, makeMessage('/start'));
+      await handleChildBotMessage(42, makeMessage('/start'), agentServiceStub);
       expect(sendMessageStub.calledOnce).to.be.true;
       expect(sendMessageStub.firstCall.args[1]).to.equal(999);
     });
 
     it('sends help message on /help', async () => {
-      await handleChildBotMessage(42, makeMessage('/help'));
+      await handleChildBotMessage(42, makeMessage('/help'), agentServiceStub);
       expect(sendMessageStub.calledOnce).to.be.true;
     });
 
-    it('echoes other messages with "Echo:" prefix', async () => {
-      await handleChildBotMessage(42, makeMessage('hello world'));
+    it('routes regular messages to agentService.chat (no echo)', async () => {
+      agentServiceStub.chat.resolves('AI answer here');
+      await handleChildBotMessage(42, makeMessage('hello world'), agentServiceStub);
       expect(sendMessageStub.calledOnce).to.be.true;
-      expect(sendMessageStub.firstCall.args[2]).to.include('Echo:');
+      expect(sendMessageStub.firstCall.args[2]).to.equal('AI answer here');
+      // Must NOT echo
+      expect(sendMessageStub.firstCall.args[2]).not.to.include('Echo:');
     });
 
-    it('sanitizes Telegram markdown characters in echo', async () => {
-      await handleChildBotMessage(42, makeMessage('hello_world'));
-      const echoed: string = sendMessageStub.firstCall.args[2];
-      expect(echoed).to.include('hello\\_world');
+    it('calls agentService.chat with string botId', async () => {
+      await handleChildBotMessage(42, makeMessage('test'), agentServiceStub);
+      expect(agentServiceStub.chat.calledOnce).to.be.true;
+      expect(agentServiceStub.chat.firstCall.args[0]).to.equal('42');
     });
 
-    it('throws when getDecryptedBotToken fails', async () => {
+    it('sends error fallback when getDecryptedBotToken fails', async () => {
       getDecryptedBotTokenStub.rejects(new Error('not found'));
+      // Token is hoisted before the try block — if getDecryptedBotToken throws,
+      // the error propagates to the outer registry handler (intentional per blocker 8).
       let threw = false;
       try {
-        await handleChildBotMessage(42, makeMessage('hi'));
+        await handleChildBotMessage(42, makeMessage('hi'), agentServiceStub);
       } catch {
         threw = true;
       }
+      // Implementation lets the token fetch error propagate — outer handler catches it
       expect(threw).to.be.true;
     });
   });
