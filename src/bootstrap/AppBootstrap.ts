@@ -211,16 +211,17 @@ export class AppBootstrap {
     const shutdown = async (signal: string) => {
       if (shuttingDown) return;
       shuttingDown = true;
+
+      // Force-exit timer starts only once a shutdown signal is received
+      const forceExit = setTimeout(() => {
+        logger.error('Forced shutdown after timeout');
+        fatalExit(1);
+      }, 10_000);
+      forceExit.unref();
+
       await this.stop(signal);
       process.exit(0);
     };
-
-    const forceExit = setTimeout(() => {
-      logger.error('Forced shutdown after timeout');
-      fatalExit(1);
-    }, 10_000);
-    // Don't keep the process alive just for this timer
-    forceExit.unref();
 
     process.on('SIGTERM', () => void shutdown('SIGTERM'));
     process.on('SIGINT', () => void shutdown('SIGINT'));
