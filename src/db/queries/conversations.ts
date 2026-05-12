@@ -74,7 +74,7 @@ export async function upsertConversation(
     `INSERT INTO conversations
        (bot_id, telegram_user_id, llm_provider, llm_model, summarization_provider, summarization_model)
      VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (bot_id, telegram_user_id) DO UPDATE SET updated_at = updated_at
+     ON CONFLICT (bot_id, telegram_user_id) DO UPDATE SET updated_at = conversations.updated_at
      RETURNING *`,
     [
       botId,
