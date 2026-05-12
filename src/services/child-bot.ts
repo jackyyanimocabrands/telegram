@@ -25,6 +25,14 @@ const MAX_MESSAGE_LENGTH = 2000;
 const ALLOWED_MODELS: Record<string, readonly string[]> = {
   openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
   anthropic: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'],
+  deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+  openrouter: [
+    'openai/gpt-4o',
+    'anthropic/claude-3-5-sonnet',
+    'deepseek/deepseek-chat',
+    'google/gemini-2.0-flash-001',
+    'meta-llama/llama-3.3-70b-instruct',
+  ],
 };
 
 export async function provisionChildBot(
@@ -187,11 +195,12 @@ export async function handleChildBotMessage(
           chatId,
           `Switched to ${providerArg} (${effectiveModel}).`,
         );
-      } catch {
+      } catch (err) {
+        logger.warn({ err, provider: providerArg, model: effectiveModel }, 'handleChildBotMessage: switchProvider failed');
         await telegram.sendMessage(
           token,
           chatId,
-          'Invalid provider. Use: /provider openai [model] or /provider anthropic [model]',
+          'Sorry, that provider is not available. Please check your command and try again.',
         );
       }
       return;

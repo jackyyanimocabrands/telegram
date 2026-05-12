@@ -20,13 +20,13 @@ export class LlmProviderFactory implements ILlmProviderFactory {
     switch (provider) {
       case 'openai':
         if (!env.OPENAI_API_KEY) {
-          throw new Error('OPENAI_API_KEY is not configured — cannot create OpenAI provider');
+          throw new Error('OpenAI API key is not configured');
         }
         instance = new OpenAiProvider(env.OPENAI_API_KEY, model);
         break;
       case 'anthropic':
         if (!env.ANTHROPIC_API_KEY) {
-          throw new Error('ANTHROPIC_API_KEY is not configured — cannot create Anthropic provider');
+          throw new Error('Anthropic API key is not configured');
         }
         instance = new AnthropicProvider(env.ANTHROPIC_API_KEY, model);
         break;

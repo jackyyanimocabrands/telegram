@@ -104,13 +104,13 @@ describe('conversations queries', () => {
 
     it('calls pool.query with the correct default provider/model values', async () => {
       const row = makeRow();
-      // upsertConversation now issues two queries: INSERT ... ON CONFLICT DO NOTHING, then SELECT
-      queryStub.onFirstCall().resolves({ rows: [], rowCount: 0 });
-      queryStub.onSecondCall().resolves({ rows: [row], rowCount: 1 });
+      // upsertConversation now issues ONE query: INSERT ... ON CONFLICT DO UPDATE RETURNING *
+      queryStub.resolves({ rows: [row], rowCount: 1 });
       await upsertConversation('bot123', 99, defaults);
-      expect(queryStub.calledTwice).to.be.true;
+      expect(queryStub.calledOnce).to.be.true;
       const [sql, params] = queryStub.firstCall.args as [string, unknown[]];
       expect(sql).to.include('ON CONFLICT');
+      expect(sql).to.include('DO UPDATE');
       expect(params).to.include('bot123');
       expect(params).to.include(99);
       expect(params).to.include('openai');
@@ -120,9 +120,8 @@ describe('conversations queries', () => {
 
     it('returns the full row from the pg result', async () => {
       const row = makeRow();
-      // First call: INSERT DO NOTHING; second call: SELECT
-      queryStub.onFirstCall().resolves({ rows: [], rowCount: 0 });
-      queryStub.onSecondCall().resolves({ rows: [row], rowCount: 1 });
+      // Single query: INSERT ... ON CONFLICT DO UPDATE SET updated_at = updated_at RETURNING *
+      queryStub.resolves({ rows: [row], rowCount: 1 });
       const result = await upsertConversation('bot123', 99, defaults);
       expect(result).to.deep.equal(row);
     });

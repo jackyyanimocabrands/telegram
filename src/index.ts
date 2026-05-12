@@ -19,7 +19,6 @@ import { HttpTelegramClient } from './services/telegram-api.js';
 import * as managedBotQueries from './db/queries/managed-bots.js';
 import { AgentService } from './services/agent.js';
 import { ConversationService } from './services/conversation.js';
-import { SummarizationService } from './services/summarization.js';
 import { LlmProviderFactory } from './services/llm/factory.js';
 import { handleManagerBotMessage } from './services/manager-bot.js';
 
@@ -89,8 +88,7 @@ async function start(): Promise<void> {
     // ── AI agent layer setup ──
     const factory = new LlmProviderFactory();
     const conversationService = new ConversationService();
-    const summarizationService = new SummarizationService(factory);
-    const agentService = new AgentService(conversationService, summarizationService, factory);
+    const agentService = new AgentService(conversationService, factory as any);
 
     const managedBotService = new ManagedBotService(registry, telegram, agentService);
 

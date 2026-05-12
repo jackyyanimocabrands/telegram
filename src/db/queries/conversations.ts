@@ -66,14 +66,16 @@ export async function upsertConversation(
 ): Promise<ConversationRow> {
   logger.debug({ botId, telegramUserId }, 'upsertConversation');
 
-  // Step 1: insert only if the row doesn't exist yet.
-  // ON CONFLICT DO NOTHING: preserve existing messages, summary, and user-chosen provider settings.
-  // This avoids a write (and updated_at bump) on every message load.
-  await pool.query(
+  // ON CONFLICT DO UPDATE SET updated_at = updated_at is a no-op update (touches no
+  // user-visible values) but satisfies PostgreSQL's RETURNING * requirement — unlike
+  // DO NOTHING which returns 0 rows on conflict. Single round-trip for both new and
+  // existing rows.
+  const result = await pool.query<ConversationRow>(
     `INSERT INTO conversations
        (bot_id, telegram_user_id, llm_provider, llm_model, summarization_provider, summarization_model)
      VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (bot_id, telegram_user_id) DO NOTHING`,
+     ON CONFLICT (bot_id, telegram_user_id) DO UPDATE SET updated_at = updated_at
+     RETURNING *`,
     [
       botId,
       telegramUserId,
@@ -84,15 +86,9 @@ export async function upsertConversation(
     ],
   );
 
-  // Step 2: always read — whether just inserted or pre-existing.
-  // The UNIQUE index on (bot_id, telegram_user_id) makes this sub-millisecond.
-  const result = await pool.query<ConversationRow>(
-    'SELECT * FROM conversations WHERE bot_id = $1 AND telegram_user_id = $2',
-    [botId, telegramUserId],
-  );
-
-  logger.debug({ botId, telegramUserId, id: result.rows[0]?.id }, 'upsertConversation: done');
-  return result.rows[0]!;
+  if (!result.rows[0]) throw new Error(`upsertConversation: unexpected empty result for botId=${botId}`);
+  logger.debug({ botId, telegramUserId, id: result.rows[0].id }, 'upsertConversation: upserted');
+  return result.rows[0] as ConversationRow;
 }
 
 export async function updateConversationMessages(
