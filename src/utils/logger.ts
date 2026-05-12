@@ -1,21 +1,35 @@
 import pino from 'pino';
+import pretty from 'pino-pretty';
 import fs from 'fs';
 import path from 'path';
 import { env } from '../config/env.js';
 
-// Ensure log directory exists before pino opens the file
+// Ensure log directory exists before opening the file stream
 const logDir = path.resolve(env.LOG_DIR);
 fs.mkdirSync(logDir, { recursive: true });
 
-// Log file: rolling name by date, e.g. logs/2026-05-12.log
+// One log file per day, e.g. logs/2026-05-12.log
 const today = new Date().toISOString().slice(0, 10);
 const logFile = path.join(logDir, `${today}.log`);
 
 const isDev = env.NODE_ENV !== 'production';
 
-// Dual transport:
-//   1. Console — pino-pretty (colorized) in dev, raw JSON in production
-//   2. File    — always raw JSON (append), one file per day
+// ── Stream 1: Console ────────────────────────────────────────────────────────
+// Dev  → pino-pretty (colorized, human-readable)
+// Prod → raw JSON to stdout
+const consoleStream = isDev
+  ? pretty({
+      colorize: true,
+      translateTime: 'HH:MM:ss.l',
+      ignore: 'pid,hostname',
+      singleLine: true,
+      destination: process.stdout,
+    })
+  : process.stdout;
+
+// ── Stream 2: File (raw JSON, append) ────────────────────────────────────────
+const fileStream = fs.createWriteStream(logFile, { flags: 'a' });
+
 export const logger = pino(
   {
     level: env.LOG_LEVEL,
@@ -30,38 +44,10 @@ export const logger = pino(
       res: pino.stdSerializers.res,
     },
   },
-  pino.transport({
-    targets: [
-      // ── Console ──────────────────────────────────────────────────────────
-      isDev
-        ? {
-            target: 'pino-pretty',
-            level: env.LOG_LEVEL,
-            options: {
-              colorize: true,
-              translateTime: 'HH:MM:ss.l',
-              ignore: 'pid,hostname',
-              singleLine: true,
-              destination: 1, // stdout
-            },
-          }
-        : {
-            target: 'pino/file',
-            level: env.LOG_LEVEL,
-            options: { destination: 1 }, // stdout raw JSON in production
-          },
-      // ── File (raw JSON, append) ───────────────────────────────────────────
-      {
-        target: 'pino/file',
-        level: env.LOG_LEVEL,
-        options: {
-          destination: logFile,
-          append: true,
-          mkdir: true,
-        },
-      },
-    ],
-  }),
+  pino.multistream([
+    { stream: consoleStream, level: env.LOG_LEVEL },
+    { stream: fileStream,    level: env.LOG_LEVEL },
+  ]),
 );
 
 /**
