@@ -138,7 +138,7 @@ export class AppBootstrap {
         this.registry.registerBot({
           botId: bot.bot_id,
           token,
-          updateMode: (bot.update_mode ?? 'webhook') as 'polling' | 'webhook',
+          updateMode: env.MANAGER_UPDATE_MODE,
           allowedUpdates: ['message', 'callback_query'],
           webhookUrl: `${env.BASE_URL}/webhook/bot/${bot.bot_id}`,
           webhookSecret: env.CHILD_WEBHOOK_SECRET,
