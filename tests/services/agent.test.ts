@@ -36,6 +36,7 @@ function makeConvService(rowOverrides: Record<string, unknown> = {}) {
     save: sinon.stub().resolves(),
     clearMessages: sinon.stub().resolves(),
     updateProvider: sinon.stub().resolves(),
+    resetForceSummarize: sinon.stub().resolves(),
   };
 }
 
@@ -79,6 +80,29 @@ async function buildAgentService(envOverrides: Record<string, string | undefined
     },
   });
   return module.AgentService;
+}
+
+async function buildAgentNodes() {
+  const module = await esmock('../../src/services/agent.ts', {
+    '../../src/config/env.js': {
+      env: {
+        DEFAULT_LLM_PROVIDER: 'openai',
+        DEFAULT_LLM_MODEL: 'gpt-4o',
+        DEFAULT_SUMMARIZATION_PROVIDER: 'openai',
+        DEFAULT_SUMMARIZATION_MODEL: 'gpt-4o-mini',
+      },
+    },
+    '../../src/db/queries/conversations.js': {
+      setConversationSystemPrompt: sinon.stub().resolves(),
+      updateConversationProvider: sinon.stub().resolves(),
+      clearConversation: sinon.stub().resolves(),
+    },
+  });
+  return {
+    checkBudgetRouter: module.checkBudgetRouter as (state: Record<string, unknown>) => string,
+    loadHistoryNode: module.loadHistoryNode as (state: Record<string, unknown>, services: Record<string, unknown>) => Promise<Record<string, unknown>>,
+    summarizeNode: module.summarizeNode as (state: Record<string, unknown>, services: Record<string, unknown>) => Promise<Record<string, unknown>>,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -582,6 +606,148 @@ describe('AgentService (LangGraph)', () => {
 
       expect(thrown).to.be.instanceOf(Error);
       expect((thrown as Error).message).to.equal('stream failure');
+    });
+  });
+
+  // ── checkBudgetRouter (unit) ──────────────────────────────────────────────
+
+  describe('checkBudgetRouter (unit)', () => {
+    it('routes to summarize when forceSummarize is true regardless of token count', async () => {
+      const { checkBudgetRouter } = await buildAgentNodes();
+
+      // Zero messages → zero tokens → well under any budget, but forceSummarize overrides
+      const state = {
+        forceSummarize: true,
+        messages: [],
+        model: 'unknown-model-xyz', // FALLBACK maxTokens=4096
+        botId: 'bot-1',
+        userId: 42,
+      };
+
+      expect(checkBudgetRouter(state)).to.equal('summarize');
+    });
+  });
+
+  // ── loadHistoryNode (unit) ────────────────────────────────────────────────
+
+  describe('loadHistoryNode (unit)', () => {
+    it('maps force_summarize: true on row to forceSummarize: true in returned state', async () => {
+      const { loadHistoryNode } = await buildAgentNodes();
+
+      const convSvc = makeConvService({ force_summarize: true });
+
+      const state = {
+        messages: [],
+        userInput: 'hello',
+        botId: 'bot-1',
+        userId: 42,
+        systemPromptOverride: undefined,
+        summary: '',
+        provider: '',
+        model: '',
+        summarizationProvider: '',
+        summarizationModel: '',
+        forceSummarize: false,
+      };
+
+      const result = await loadHistoryNode(state, { conversationService: convSvc });
+      expect((result as { forceSummarize: boolean }).forceSummarize).to.be.true;
+    });
+  });
+
+  // ── summarizeNode (unit) ──────────────────────────────────────────────────
+
+  describe('summarizeNode (unit)', () => {
+    function makeMessages(count: number) {
+      return Array.from({ length: count }, (_, i) => {
+        const m = i % 2 === 0 ? new HumanMessage(`user ${i}`) : new AIMessage(`ai ${i}`);
+        // Assign deterministic IDs so RemoveMessage can reference them
+        (m as { id: string }).id = `msg-${i}`;
+        return m;
+      });
+    }
+
+    it('summarizes 75% of messages when forceSummarize is true', async () => {
+      const { summarizeNode } = await buildAgentNodes();
+
+      const { stubModel, stubFactory } = makeModelFactory('summary text');
+      const convSvc = makeConvService();
+
+      // 8 messages → floor(8 * 0.75) = 6 should be passed to the summarizer
+      const msgs = makeMessages(8);
+
+      const state = {
+        messages: msgs,
+        forceSummarize: true,
+        botId: 'bot-1',
+        userId: 42,
+        summarizationProvider: 'openai',
+        summarizationModel: 'gpt-4o-mini',
+        summary: '',
+      };
+
+      await summarizeNode(state, { modelFactory: stubFactory, conversationService: convSvc });
+
+      // The summarizer model.invoke should have been called; verify message count passed to it
+      expect(stubModel.invoke.calledOnce).to.be.true;
+      const [invokeArgs] = stubModel.invoke.firstCall.args as [unknown[]];
+      // invokeArgs = [SystemMessage, ...messagesToSummarize filtered to human/ai, HumanMessage]
+      // messagesToSummarize length = floor(8 * 0.75) = 6; all are human/ai so 6 history msgs + 1 system + 1 closing human = 8
+      const nonSystemNonClosing = (invokeArgs as { getType(): string }[]).filter(
+        (m, idx) => idx !== 0 && idx !== invokeArgs.length - 1
+      );
+      expect(nonSystemNonClosing).to.have.length(6);
+    });
+
+    it('calls conversationService.resetForceSummarize with correct botId and userId when forceSummarize is true', async () => {
+      const { summarizeNode } = await buildAgentNodes();
+
+      const { stubFactory } = makeModelFactory('summary text');
+      const convSvc = makeConvService();
+
+      const msgs = makeMessages(4);
+
+      const state = {
+        messages: msgs,
+        forceSummarize: true,
+        botId: 'bot-1',
+        userId: 42,
+        summarizationProvider: 'openai',
+        summarizationModel: 'gpt-4o-mini',
+        summary: '',
+      };
+
+      await summarizeNode(state, { modelFactory: stubFactory, conversationService: convSvc });
+
+      // Allow the fire-and-forget promise to resolve
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(convSvc.resetForceSummarize.calledOnceWith('bot-1', 42)).to.be.true;
+    });
+
+    it('does NOT call conversationService.resetForceSummarize when forceSummarize is false', async () => {
+      const { summarizeNode } = await buildAgentNodes();
+
+      const { stubFactory } = makeModelFactory('summary text');
+      const convSvc = makeConvService();
+
+      const msgs = makeMessages(4);
+
+      const state = {
+        messages: msgs,
+        forceSummarize: false,
+        botId: 'bot-1',
+        userId: 42,
+        summarizationProvider: 'openai',
+        summarizationModel: 'gpt-4o-mini',
+        summary: '',
+      };
+
+      await summarizeNode(state, { modelFactory: stubFactory, conversationService: convSvc });
+
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(convSvc.resetForceSummarize.called).to.be.false;
     });
   });
 });

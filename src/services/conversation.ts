@@ -5,6 +5,7 @@ import {
   upsertConversation,
   updateConversationMessages,
   updateConversationProvider,
+  resetForceSummarize,
   type ConversationRow,
 } from '../db/queries/conversations.js';
 import type { ConversationMessage } from '../types/conversation.js';
@@ -56,6 +57,14 @@ export class ConversationService {
   ): Promise<void> {
     logger.debug({ botId, telegramUserId, provider, model }, 'ConversationService.updateProvider');
     await updateConversationProvider(botId, telegramUserId, provider, model);
+  }
+
+  /**
+   * Reset the force_summarize flag to FALSE after a forced summarization completes.
+   */
+  async resetForceSummarize(botId: string, telegramUserId: number): Promise<void> {
+    logger.debug({ botId, telegramUserId }, 'ConversationService.resetForceSummarize');
+    await resetForceSummarize(botId, telegramUserId);
   }
 }
 

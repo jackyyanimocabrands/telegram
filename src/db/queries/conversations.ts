@@ -18,6 +18,7 @@ export interface ConversationRow {
   messages: ConversationMessage[];
   summary: string | null;
   system_prompt: string | null;
+  force_summarize: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -149,5 +150,19 @@ export async function setConversationSystemPrompt(
      SET system_prompt = $1, updated_at = now()
      WHERE bot_id = $2 AND telegram_user_id = $3`,
     [systemPrompt, botId, telegramUserId],
+  );
+}
+
+export async function resetForceSummarize(
+  botId: string,
+  telegramUserId: number,
+  pool: Pool = defaultPool,
+): Promise<void> {
+  logger.debug({ botId, telegramUserId }, 'resetForceSummarize');
+  await pool.query(
+    `UPDATE conversations
+     SET force_summarize = FALSE, updated_at = now()
+     WHERE bot_id = $1 AND telegram_user_id = $2`,
+    [botId, telegramUserId],
   );
 }

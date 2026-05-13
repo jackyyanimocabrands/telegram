@@ -71,6 +71,10 @@ const AgentStateAnnotation = Annotation.Root({
     reducer: (_a: string, b: string) => b,
     default: () => '',
   }),
+  forceSummarize: Annotation<boolean>({
+    reducer: (_a: boolean, b: boolean) => b,
+    default: () => false,
+  }),
 });
 
 type AgentState = typeof AgentStateAnnotation.State;
@@ -139,6 +143,7 @@ export async function loadHistoryNode(
     summarizationProvider: row.summarization_provider,
     summarizationModel: row.summarization_model,
     summary: row.summary ?? '',
+    forceSummarize: row.force_summarize,
   };
 }
 
@@ -190,6 +195,10 @@ export function checkBudgetRouter(state: AgentState): 'summarize' | 'save' {
 
   logger.debug({ currentTokens, budget }, 'checkBudgetRouter');
 
+  if (state.forceSummarize) {
+    logger.info({ botId: state.botId, userId: state.userId }, 'checkBudgetRouter: force_summarize flag set — routing to summarize');
+    return 'summarize';
+  }
   return currentTokens > budget ? 'summarize' : 'save';
 }
 
@@ -204,7 +213,7 @@ export function checkBudgetRouter(state: AgentState): 'summarize' | 'save' {
  */
 export async function summarizeNode(
   state: AgentState,
-  services: { modelFactory: ILlmModelFactory },
+  services: { modelFactory: ILlmModelFactory; conversationService: ConversationService },
 ): Promise<Partial<AgentState>> {
   const { modelFactory } = services;
 
@@ -219,13 +228,15 @@ export async function summarizeNode(
       ),
   );
 
-  const oldestHalfCount = Math.floor(historyMessages.length / 2);
-  if (oldestHalfCount === 0) {
+  // Force-summarize compresses the oldest 75%; automatic compresses the oldest 50%
+  const fraction = state.forceSummarize ? 0.75 : 0.5;
+  const oldestCount = Math.floor(historyMessages.length * fraction);
+  if (oldestCount === 0) {
     logger.debug('summarizeNode: not enough messages to summarize, skipping');
     return {};
   }
 
-  const messagesToSummarize = historyMessages.slice(0, oldestHalfCount);
+  const messagesToSummarize = historyMessages.slice(0, oldestCount);
 
   try {
     const model = modelFactory.create(state.summarizationProvider, state.summarizationModel);
@@ -245,9 +256,16 @@ export async function summarizeNode(
         : JSON.stringify(summaryResult.content);
 
     logger.info(
-      { summarizedCount: oldestHalfCount, summaryLength: newSummaryText.length },
+      { summarizedCount: oldestCount, summaryLength: newSummaryText.length },
       'summarizeNode: summarization complete',
     );
+
+    // Reset the force_summarize flag — fire-and-forget; failure is non-fatal
+    if (state.forceSummarize) {
+      services.conversationService.resetForceSummarize(state.botId, state.userId).catch((err: unknown) => {
+        logger.warn({ err, botId: state.botId, userId: state.userId }, 'summarizeNode: failed to reset force_summarize flag (non-fatal)');
+      });
+    }
 
     // Remove the oldest half from state using RemoveMessage
     const removeMessages = messagesToSummarize

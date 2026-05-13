@@ -124,7 +124,7 @@ describe('handleManagerBotMessage', () => {
 
     expect(agentServiceStub.chatStream.calledOnce).to.be.true;
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
-    expect(systemPrompt).to.include('settings');
+    expect(systemPrompt).to.include('account creation');
     expect(systemPrompt).to.include('@alicebot');
     expect(systemPrompt).not.to.include('onboarding');
   });
