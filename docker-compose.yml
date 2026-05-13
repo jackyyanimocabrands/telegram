@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: animocamind_connector
+      POSTGRES_DB: hellominds_connector
     ports:
       - '5433:5432'
     volumes:

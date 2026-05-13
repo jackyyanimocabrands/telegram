@@ -1,5 +1,7 @@
 import { logger } from '../utils/logger.js';
 import { findManagedBotByOwner } from '../db/queries/managed-bots.js';
+import { env } from '../config/env.js';
+import { interpolate } from '../utils/interpolate.js';
 import type { TelegramClient } from './telegram-api.js';
 import type { AgentService } from './agent.js';
 import type { Message } from '../types/telegram.js';
@@ -25,7 +27,7 @@ export async function handleManagerBotMessage(
   }
 
   logger.info(
-    { chatId, userId: from.id, textLength: text.length },
+    { chatId, userId: from.id, from, textLength: text.length },
     'handleManagerBotMessage: start',
   );
 
@@ -47,11 +49,17 @@ export async function handleManagerBotMessage(
 
     if (managedBot?.status === 'ACTIVE') {
       // Settings/billing mode — bot is live, manager handles platform support
-      systemPrompt =
-        `You are Animocamind's platform assistant for ${safeName}. ` +
-        `Their personal AI agent @${managedBot.bot_username} is live and handles general conversations. ` +
+      const template =
+        (env.MANAGER_SETTINGS_PROMPT && env.MANAGER_SETTINGS_PROMPT.trim()) ||
+        `You are HelloMinds' platform assistant for {name}. ` +
+        `Their personal AI agent @{botUsername} is live and handles general conversations. ` +
         `Your role is to help with account settings, billing, and platform-level questions. ` +
         `Be concise and direct.`;
+
+      systemPrompt = interpolate(template, {
+        name: safeName,
+        botUsername: managedBot.bot_username ?? '',
+      });
     } else {
       // Onboarding mode — guide user to create their personal bot
       const suggestedUsername = safeUsername
@@ -61,11 +69,14 @@ export async function handleManagerBotMessage(
         `https://t.me/newbot/${botUsername}/${suggestedUsername}` +
         `?name=${encodeURIComponent(`${safeName}'s Bot`)}`;
 
-      systemPrompt =
-        `You are an onboarding assistant for Animocamind. ` +
-        `Help the user understand what Animocamind does and guide them to create their personal AI agent bot. ` +
-        `When the time is right, share this deep link with them: ${deepLink}. ` +
+      const template =
+        (env.MANAGER_ONBOARDING_PROMPT && env.MANAGER_ONBOARDING_PROMPT.trim()) ||
+        `You are an onboarding assistant for HelloMinds. ` +
+        `Help the user understand what HelloMinds does and guide them to create their personal AI agent bot. ` +
+        `When the time is right, share this deep link with them: {deepLink}. ` +
         `Be conversational, helpful, and answer any questions they have.`;
+
+      systemPrompt = interpolate(template, { name: safeName, deepLink });
 
       // Append status hint if bot exists but not yet active
       if (managedBot?.status === 'PENDING' || managedBot?.status === 'PROVISIONING') {

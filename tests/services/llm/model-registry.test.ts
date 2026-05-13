@@ -12,6 +12,10 @@ describe('model-registry', () => {
         'claude-3-5-sonnet-20241022',
         'claude-3-5-haiku-20241022',
         'claude-3-opus-20240229',
+        'deepseek-chat',
+        'deepseek-reasoner',
+        'deepseek-v3',
+        'deepseek-v4-pro',
       ];
       for (const model of expected) {
         expect(MODEL_REGISTRY).to.have.property(model);
@@ -21,12 +25,16 @@ describe('model-registry', () => {
 
   describe('getModelConfig', () => {
     const knownModels: Array<{ model: string; maxTokens: number }> = [
-      { model: 'gpt-4o', maxTokens: 128000 },
-      { model: 'gpt-4o-mini', maxTokens: 128000 },
-      { model: 'gpt-4-turbo', maxTokens: 128000 },
+      { model: 'gpt-4o',                     maxTokens: 128000 },
+      { model: 'gpt-4o-mini',                maxTokens: 128000 },
+      { model: 'gpt-4-turbo',                maxTokens: 128000 },
       { model: 'claude-3-5-sonnet-20241022', maxTokens: 200000 },
-      { model: 'claude-3-5-haiku-20241022', maxTokens: 200000 },
-      { model: 'claude-3-opus-20240229', maxTokens: 200000 },
+      { model: 'claude-3-5-haiku-20241022',  maxTokens: 200000 },
+      { model: 'claude-3-opus-20240229',     maxTokens: 200000 },
+      { model: 'deepseek-chat',              maxTokens: 128000 },
+      { model: 'deepseek-reasoner',          maxTokens: 128000 },
+      { model: 'deepseek-v3',               maxTokens: 128000 },
+      { model: 'deepseek-v4-pro',           maxTokens: 128000 },
     ];
 
     for (const { model, maxTokens } of knownModels) {

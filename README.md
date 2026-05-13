@@ -1,4 +1,4 @@
-# Animocamind Telegram Connector
+# HelloMinds Telegram Connector
 
 A service that enables users to **login with Telegram** and automatically provision a **dedicated Telegram bot per user** using Telegram's Managed Bots API (Bot API 9.6).
 
@@ -59,10 +59,10 @@ A service that enables users to **login with Telegram** and automatically provis
 
 ## Overview
 
-This connector bridges Animocamind with Telegram by providing two core capabilities:
+This connector bridges HelloMinds with Telegram by providing two core capabilities:
 
 1. **Telegram Login** — Authenticate users via Telegram's Login Widget (OAuth-like, verified with HMAC-SHA256).
-2. **Per-User Bot Provisioning** — After login, each user is guided through creating their own Telegram bot managed by the Animocamind manager bot, using the Managed Bots feature introduced in Bot API 9.6 (April 2026).
+2. **Per-User Bot Provisioning** — After login, each user is guided through creating their own Telegram bot managed by the HelloMinds manager bot, using the Managed Bots feature introduced in Bot API 9.6 (April 2026).
 
 ---
 
@@ -93,7 +93,7 @@ This connector bridges Animocamind with Telegram by providing two core capabilit
                     │                              │
                     ▼                              ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   Animocamind Backend                       │
+│                   HelloMinds Backend                        │
 │                                                             │
 │  • Verifies login hash (HMAC-SHA256)                        │
 │  • Stores user Telegram ID                                  │
@@ -123,7 +123,7 @@ This connector bridges Animocamind with Telegram by providing two core capabilit
    ```
    /setdomain
    ```
-   Then enter your website's domain (e.g., `app.animocamind.com`).
+   Then enter your website's domain (e.g., `app.hellominds.com`).
 
 3. Embed the widget on your login page:
 
@@ -272,7 +272,7 @@ https://t.me/newbot/{manager_bot_username}/{suggested_bot_username}?name={sugges
 
 **Example:**
 ```
-https://t.me/newbot/AnimocamindManagerBot/alice_animoca_bot?name=Alice%27s+Bot
+https://t.me/newbot/HelloMindsManagerBot/alice_hellominds_bot?name=Alice%27s+Bot
 ```
 
 > The user opens this link in the Telegram app. Telegram guides them through the creation steps. A human confirmation is always required — headless/silent creation is not supported.
@@ -296,7 +296,7 @@ Once the user completes bot creation, your manager bot receives a `ManagedBotUpd
     "bot": {
       "id": 987654321,
       "is_bot": true,
-      "username": "alice_animoca_bot",
+      "username": "alice_hellominds_bot",
       "first_name": "Alice's Bot"
     }
   }
@@ -380,8 +380,8 @@ Expected response for a manager bot:
   "result": {
     "id": 123456789,
     "is_bot": true,
-    "first_name": "Animocamind Manager",
-    "username": "AnimocamindManagerBot",
+    "first_name": "HelloMinds Manager",
+    "username": "HelloMindsManagerBot",
     "can_manage_bots": true
   }
 }
@@ -436,7 +436,7 @@ https://t.me/newbot/{manager_bot_username}/{suggested_username}?name={suggested_
 Example:
 
 ```
-https://t.me/newbot/AnimocamindManagerBot/alice_animoca_bot?name=Alice%27s+Bot
+https://t.me/newbot/HelloMindsManagerBot/alice_hellominds_bot?name=Alice%27s+Bot
 ```
 
 The user opens this in their Telegram app and follows the guided creation flow.
@@ -520,7 +520,7 @@ When a user completes bot creation (or a token is rotated, or ownership changes)
       "id": 987654321,
       "is_bot": true,
       "first_name": "Alice's Bot",
-      "username": "alice_animoca_bot"
+      "username": "alice_hellominds_bot"
     }
   }
 }
@@ -873,7 +873,7 @@ async function personaliseChildBot(childToken, ownerFirstName) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      description: `This is ${ownerFirstName}'s personal AI bot powered by Animocamind.`,
+      description: `This is ${ownerFirstName}'s personal AI bot powered by HelloMinds.`,
     }),
   });
 }
@@ -1143,7 +1143,7 @@ const childBotRecord = {
 ## Full User Journey
 
 ```
-1. User visits Animocamind and clicks "Login with Telegram"
+1. User visits HelloMinds and clicks "Login with Telegram"
         │
         ▼
 2. Telegram popup opens — user confirms login
@@ -1290,13 +1290,13 @@ The manager bot behaves differently depending on whether the user has an active 
 
 Applies when the user has no active child bot (`status` is `None`, `PENDING`, or `PROVISIONING`).
 
-The manager bot acts as a conversational onboarding assistant. It answers questions about Animocamind and guides the user toward creating their personal bot.
+The manager bot acts as a conversational onboarding assistant. It answers questions about HelloMinds and guides the user toward creating their personal bot.
 
 **System prompt used:**
 
 ```
-You are an onboarding assistant for Animocamind. Help the user understand what
-Animocamind does and guide them to create their personal AI agent bot. When the
+You are an onboarding assistant for HelloMinds. Help the user understand what
+HelloMinds does and guide them to create their personal AI agent bot. When the
 time is right, share this deep link with them: [deepLink]. Be conversational,
 helpful, and answer any questions they have.
 ```
@@ -1319,7 +1319,7 @@ The manager bot steps back from onboarding and becomes a concise platform assist
 **System prompt used:**
 
 ```
-You are Animocamind's platform assistant for [firstName]. Their personal AI agent
+You are HelloMinds' platform assistant for [firstName]. Their personal AI agent
 @[botUsername] is live and handles general conversations. Your role is to help with
 account settings, billing, and platform-level questions. Be concise and direct.
 ```

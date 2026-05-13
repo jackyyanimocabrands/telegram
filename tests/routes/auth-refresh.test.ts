@@ -8,14 +8,14 @@ import { issueRefreshToken, issueAccessToken } from '../../src/services/session.
 import type { AuthenticatedUser } from '../../src/types/api.js';
 
 const TEST_USER: AuthenticatedUser = {
-  id: 1,
+  id: 'a0000000-0000-0000-0000-000000000001',
   telegramId: 99887766,
   firstName: 'Test',
   username: 'testuser',
 };
 
 const TEST_USER_ROW = {
-  id: 1,
+  id: 'a0000000-0000-0000-0000-000000000001',
   telegram_id: 99887766,
   first_name: 'Test',
   last_name: null,
@@ -66,7 +66,7 @@ describe('POST /api/auth/refresh', () => {
     expect(res.status).to.equal(200);
     expect(res.body).to.have.property('ok', true);
     expect(res.body).to.have.property('accessToken').that.is.a('string').and.has.length.greaterThan(0);
-    expect(findUserByIdStub.calledOnceWith(1)).to.be.true;
+    expect(findUserByIdStub.calledOnceWith('a0000000-0000-0000-0000-000000000001')).to.be.true;
   });
 
   it('returns 401 when refreshToken field is missing', async () => {

@@ -28,7 +28,7 @@ export async function tryAcquireUpdate(
   return null;
 }
 
-export async function markProcessed(id: number): Promise<void> {
+export async function markProcessed(id: string): Promise<void> {
   logger.debug({ id }, 'markProcessed: webhook event marked processed');
   await pool.query(
     `UPDATE webhook_event_log SET status = 'PROCESSED', error = NULL WHERE id = $1`,
@@ -36,7 +36,7 @@ export async function markProcessed(id: number): Promise<void> {
   );
 }
 
-export async function markFailed(id: number, error: string): Promise<void> {
+export async function markFailed(id: string, error: string): Promise<void> {
   logger.warn({ id, error }, 'markFailed: webhook event marked failed — available for retry');
   await pool.query(
     `UPDATE webhook_event_log SET status = 'FAILED', error = $1 WHERE id = $2`,

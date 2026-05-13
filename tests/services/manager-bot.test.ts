@@ -18,7 +18,7 @@ describe('handleManagerBotMessage', () => {
   const MANAGER_TOKEN = 'manager-token-abc';
   const MANAGER_BOT_ID = 'manager';
   const BASE_URL = 'https://example.com';
-  const BOT_USERNAME = 'animocamind_bot';
+  const BOT_USERNAME = 'hellominds_bot';
 
   const makeMessage = (overrides: Partial<{
     chatId: number;
@@ -158,5 +158,100 @@ describe('handleManagerBotMessage', () => {
     expect(agentServiceStub.chat.firstCall.args[0]).to.equal('manager');
     expect(agentServiceStub.chat.firstCall.args[1]).to.equal(77);
     expect(agentServiceStub.chat.firstCall.args[2]).to.equal('test message');
+  });
+
+  describe('env prompt overrides', () => {
+    let handleManagerBotMessageWithEnv: any;
+    let findManagedBotByOwnerEnvStub: sinon.SinonStub;
+    let agentEnvStub: { chat: sinon.SinonStub };
+    let mockTelegramEnv: MockTelegramClient;
+
+    beforeEach(async () => {
+      mockTelegramEnv = new MockTelegramClient();
+      mockTelegramEnv.sendMessage.resolves({ message_id: 99, chat: { id: 100 }, date: 1 });
+      agentEnvStub = { chat: sinon.stub().resolves('reply') };
+      findManagedBotByOwnerEnvStub = sinon.stub();
+    });
+
+    afterEach(async () => {
+      sinon.restore();
+      await esmock.purge();
+    });
+
+    it('uses MANAGER_ONBOARDING_PROMPT template and interpolates {deepLink}', async () => {
+      findManagedBotByOwnerEnvStub.resolves(null);
+
+      const mod = await esmock('../../src/services/manager-bot.ts', {
+        '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerEnvStub },
+        '../../src/config/env.js': {
+          env: { MANAGER_ONBOARDING_PROMPT: 'Custom onboarding. Link: {deepLink}' },
+        },
+        '../../src/utils/interpolate.js': { interpolate: (t: string, v: Record<string, string>) => t.replace(/\{([^}]+)\}/g, (m: string, k: string) => v[k] ?? m) },
+      });
+
+      const msg = {
+        message_id: 1,
+        chat: { id: 100, type: 'private' as const },
+        date: 1,
+        from: { id: 42, is_bot: false, first_name: 'Alice', username: 'alice' },
+        text: 'hi',
+      };
+
+      await mod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
+
+      const systemPrompt: string = agentEnvStub.chat.firstCall.args[3];
+      expect(systemPrompt).to.include('Custom onboarding');
+      expect(systemPrompt).to.include('https://t.me/newbot');
+      expect(systemPrompt).not.to.include('{deepLink}');
+    });
+
+    it('uses MANAGER_SETTINGS_PROMPT template and interpolates {name} and {botUsername}', async () => {
+      findManagedBotByOwnerEnvStub.resolves({ status: 'ACTIVE', bot_username: 'alicebot' });
+
+      const mod = await esmock('../../src/services/manager-bot.ts', {
+        '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerEnvStub },
+        '../../src/config/env.js': {
+          env: { MANAGER_SETTINGS_PROMPT: 'Welcome {name}. Your bot is @{botUsername}.' },
+        },
+        '../../src/utils/interpolate.js': { interpolate: (t: string, v: Record<string, string>) => t.replace(/\{([^}]+)\}/g, (m: string, k: string) => v[k] ?? m) },
+      });
+
+      const msg = {
+        message_id: 1,
+        chat: { id: 100, type: 'private' as const },
+        date: 1,
+        from: { id: 42, is_bot: false, first_name: 'Alice', username: 'alice' },
+        text: 'hi',
+      };
+
+      await mod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
+
+      const systemPrompt: string = agentEnvStub.chat.firstCall.args[3];
+      expect(systemPrompt).to.equal('Welcome Alice. Your bot is @alicebot.');
+    });
+
+    it('falls back to default onboarding prompt when MANAGER_ONBOARDING_PROMPT is absent', async () => {
+      findManagedBotByOwnerEnvStub.resolves(null);
+
+      const mod = await esmock('../../src/services/manager-bot.ts', {
+        '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerEnvStub },
+        '../../src/config/env.js': { env: {} },
+        '../../src/utils/interpolate.js': { interpolate: (t: string, v: Record<string, string>) => t.replace(/\{([^}]+)\}/g, (m: string, k: string) => v[k] ?? m) },
+      });
+
+      const msg = {
+        message_id: 1,
+        chat: { id: 100, type: 'private' as const },
+        date: 1,
+        from: { id: 42, is_bot: false, first_name: 'Alice', username: 'alice' },
+        text: 'hi',
+      };
+
+      await mod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
+
+      const systemPrompt: string = agentEnvStub.chat.firstCall.args[3];
+      expect(systemPrompt).to.include('onboarding assistant for HelloMinds');
+      expect(systemPrompt).to.include('https://t.me/newbot');
+    });
   });
 });

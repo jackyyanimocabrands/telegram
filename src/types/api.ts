@@ -15,7 +15,7 @@ export type ManagedBotStatus = 'PENDING' | 'PROVISIONING' | 'ACTIVE' | 'TOKEN_RO
 export type WebhookEventStatus = 'PENDING' | 'PROCESSED' | 'FAILED';
 
 export interface AuthenticatedUser {
-  id: number;
+  id: string;        // UUID
   telegramId: number;
   firstName: string;
   username?: string;
@@ -36,7 +36,7 @@ export interface TelegramLoginRequest {
 export interface AuthResponse {
   ok: true;
   user: {
-    id: number;
+    id: string;      // UUID
     telegramId: number;
     firstName: string;
     lastName?: string;
@@ -73,11 +73,11 @@ export interface BotStatusResponse {
 // ── Internal DB row types ──
 
 export interface ManagedBotRow {
-  id: number;
+  id: string;            // UUID
   bot_id: number;
   bot_username: string | null;
   owner_telegram_id: number;
-  owner_user_id: number;
+  owner_user_id: string; // UUID stored as TEXT, no FK
   encrypted_token: Buffer;
   token_iv: Buffer;
   token_key_version: number;
@@ -87,8 +87,6 @@ export interface ManagedBotRow {
   commands_set: boolean;
   update_mode: 'polling' | 'webhook' | null;
   polling_offset: number;
-  // B-5: webhook_secret is now AES-256-GCM encrypted at rest (same pattern as encrypted_token).
-  // webhook_secret holds the ciphertext (BYTEA), with iv and key_version as companion columns.
   webhook_secret: Buffer | null;
   webhook_secret_iv: Buffer | null;
   webhook_secret_key_version: number | null;
@@ -98,7 +96,7 @@ export interface ManagedBotRow {
 }
 
 export interface UserRow {
-  id: number;
+  id: string;            // UUID
   telegram_id: number;
   first_name: string;
   last_name: string | null;
@@ -115,7 +113,7 @@ export interface AppStateRow {
 }
 
 export interface WebhookEventLogRow {
-  id: number;
+  id: string;            // UUID
   bot_id: number;
   update_id: number;
   event_type: string;

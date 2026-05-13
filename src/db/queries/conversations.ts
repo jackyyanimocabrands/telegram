@@ -6,7 +6,7 @@ import type { ConversationMessage } from '../../types/conversation.js';
 export type { ConversationMessage };
 
 export interface ConversationRow {
-  id: number;
+  id: string;
   bot_id: string;
   /** pg BIGINT (OID 20) — parsed to number by the global type parser in db/client.ts */
   telegram_user_id: number;

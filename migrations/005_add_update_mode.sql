@@ -1,3 +1,0 @@
-ALTER TABLE managed_bots
-  ADD COLUMN IF NOT EXISTS update_mode    TEXT    NOT NULL DEFAULT 'webhook',
-  ADD COLUMN IF NOT EXISTS polling_offset BIGINT  NOT NULL DEFAULT 0;

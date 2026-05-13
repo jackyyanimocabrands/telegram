@@ -44,6 +44,9 @@ const envSchema = z.object({
   DEFAULT_SUMMARIZATION_MODEL: z.string().default('gpt-4o-mini'),
   FALLBACK_LLM_PROVIDER: z.enum(['openai', 'anthropic', 'deepseek', 'openrouter']).optional(),
   FALLBACK_LLM_MODEL: z.string().optional(),
+  // Manager bot system prompts (optional — hardcoded defaults used if absent)
+  MANAGER_ONBOARDING_PROMPT: z.string().optional(),
+  MANAGER_SETTINGS_PROMPT: z.string().optional(),
 }).superRefine((data, ctx) => {
   // DEFAULT_LLM_PROVIDER key requirements
   if (data.DEFAULT_LLM_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {

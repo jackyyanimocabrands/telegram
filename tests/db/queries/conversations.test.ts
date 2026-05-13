@@ -13,7 +13,7 @@ import {
 
 // Minimal fixture — mirrors the full ConversationRow shape
 const makeRow = (overrides: Record<string, unknown> = {}) => ({
-  id: 1,
+  id: 'a0000000-0000-0000-0000-000000000001',
   bot_id: 'bot123',
   telegram_user_id: 99,
   llm_provider: 'openai',

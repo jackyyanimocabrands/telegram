@@ -25,7 +25,7 @@ program
       try {
         const { default: figlet } = await import('figlet');
         const { default: chalk } = await import('chalk');
-        const banner = figlet.textSync('AnimocaMind', {
+        const banner = figlet.textSync('HelloMinds', {
           font: 'Pagga',
           horizontalLayout: 'default',
           verticalLayout: 'default',

@@ -15,7 +15,7 @@ describe('webhook-log queries', () => {
 
   describe('tryAcquireUpdate', () => {
     it('returns the inserted row when acquired', async () => {
-      const row = { id: 1, bot_id: 10, update_id: 5, event_type: 'managed_bot_updated', payload: {}, status: 'PENDING', error: null, created_at: new Date() };
+      const row = { id: 'a0000000-0000-0000-0000-000000000001', bot_id: 10, update_id: 5, event_type: 'managed_bot_updated', payload: {}, status: 'PENDING', error: null, created_at: new Date() };
       queryStub.resolves({ rows: [row] });
       const result = await tryAcquireUpdate(10, 5, 'managed_bot_updated', {});
       expect(result).to.deep.equal(row);
@@ -39,18 +39,18 @@ describe('webhook-log queries', () => {
   describe('markProcessed', () => {
     it('sets status=PROCESSED and clears error', async () => {
       queryStub.resolves({ rows: [] });
-      await markProcessed(1);
+      await markProcessed('a0000000-0000-0000-0000-000000000001');
       const [sql, params] = queryStub.firstCall.args;
       expect(sql).to.include("status = 'PROCESSED'");
       expect(sql).to.include('error = NULL');
-      expect(params).to.include(1);
+      expect(params).to.include('a0000000-0000-0000-0000-000000000001');
     });
   });
 
   describe('markFailed', () => {
     it('sets status=FAILED and stores error message', async () => {
       queryStub.resolves({ rows: [] });
-      await markFailed(1, 'something went wrong');
+      await markFailed('a0000000-0000-0000-0000-000000000001', 'something went wrong');
       const [sql, params] = queryStub.firstCall.args;
       expect(sql).to.include("status = 'FAILED'");
       expect(params).to.include('something went wrong');

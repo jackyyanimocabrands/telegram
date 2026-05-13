@@ -49,13 +49,13 @@ export async function provisionChildBot(
 
   await telegram.setMyDescription(
     token,
-    `This is ${ownerFirstName}'s personal AI bot powered by Animocamind.`,
+    `This is ${ownerFirstName}'s personal AI bot powered by HelloMinds.`,
   );
   logger.debug({ botId }, 'provisionChildBot: description set');
 
   await telegram.setMyShortDescription(
     token,
-    `${ownerFirstName}'s personal AI agent by Animocamind.`,
+    `${ownerFirstName}'s personal AI agent by HelloMinds.`,
   );
   logger.debug({ botId }, 'provisionChildBot: short description set');
 
@@ -127,7 +127,7 @@ export async function handleChildBotMessage(
       await telegram.sendMessage(
         token,
         chatId,
-        "Hello! I'm your personal AI agent powered by Animocamind. Type anything to start chatting, or use /help for available commands.",
+        "Hello! I'm your personal AI agent powered by HelloMinds. Type anything to start chatting, or use /help for available commands.",
       );
       return;
     }

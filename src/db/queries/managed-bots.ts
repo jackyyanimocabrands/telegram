@@ -7,7 +7,7 @@ export async function upsertManagedBot(data: {
   botId: number;
   botUsername?: string;
   ownerTelegramId: number;
-  ownerUserId: number;
+  ownerUserId: string;
   encryptedToken: Buffer;
   tokenIv: Buffer;
   tokenKeyVersion: number;

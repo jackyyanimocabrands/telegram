@@ -79,7 +79,7 @@ authRouter.post<never, AuthResponse | { ok: false; error: string }, TelegramLogi
     const safeUsername = rawUsername
       .replace(/[^a-zA-Z0-9_]/g, '_')
       .slice(0, 32);
-    const suggestedUsername = `${safeUsername}_animoca_bot`;
+    const suggestedUsername = `${safeUsername}_hellominds_bot`;
     const deepLink = `https://t.me/newbot/${env.BOT_USERNAME}/${suggestedUsername}?name=${encodeURIComponent(data.first_name + "'s AI Agent")}`;
 
     logger.debug({ userId: user.id, telegramId, deepLink }, 'Access + refresh tokens issued, sending auth response');

@@ -1,9 +1,9 @@
 {
-  "name": "@animocabrands/animocamind-telegram-connector",
+  "name": "@hellominds/hellominds-telegram-connector",
   "version": "0.1.0",
-  "description": "Telegram connector for Animocamind — login widget, managed bot provisioning, per-user bot lifecycle",
+  "description": "Telegram connector for HelloMinds — login widget, managed bot provisioning, per-user bot lifecycle",
   "main": "dist/index.js",
-  "author": "Animoca Brands",
+  "author": "HelloMinds",
   "license": "UNLICENSED",
   "type": "module",
   "private": true,

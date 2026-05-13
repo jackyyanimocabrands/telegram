@@ -24,7 +24,7 @@ describe('auth routes', () => {
 
   beforeEach(async () => {
     upsertUserStub = sinon.stub().resolves({
-      id: 1,
+      id: 'a0000000-0000-0000-0000-000000000001',
       telegram_id: 99887766,
       first_name: 'Test',
       last_name: null,
