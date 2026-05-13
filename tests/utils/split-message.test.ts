@@ -1,6 +1,6 @@
 import { describe, it } from 'mocha';
 import { expect } from 'chai';
-import { splitAtSentenceBoundary } from '../../src/utils/split-message.js';
+import { splitAtSentenceBoundary, trimToLastSentence } from '../../src/utils/split-message.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -168,5 +168,43 @@ describe('splitAtSentenceBoundary()', () => {
     const originalNormalised = text.replace(/\s+/g, ' ').trim();
 
     expect(reassembled).to.equal(originalNormalised);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// trimToLastSentence()
+// ---------------------------------------------------------------------------
+
+describe('trimToLastSentence()', () => {
+  it('returns text up to last ". " when trailing partial exists', () => {
+    expect(trimToLastSentence('Hello world. This is partial')).to.equal('Hello world.');
+  });
+
+  it('returns text up to last "? " with multiple sentence enders', () => {
+    expect(trimToLastSentence('First! Second? Third partial')).to.equal('First! Second?');
+  });
+
+  it('returns empty string when no sentence boundary found', () => {
+    expect(trimToLastSentence('No sentence boundary')).to.equal('');
+  });
+
+  it('handles ".\\n" sentence boundary', () => {
+    expect(trimToLastSentence('Complete sentence.\nAnother partial')).to.equal('Complete sentence.');
+  });
+
+  it('handles "\\n\\n" paragraph boundary', () => {
+    expect(trimToLastSentence('Para one.\n\nPara two partial')).to.equal('Para one.');
+  });
+
+  it('trims trailing whitespace when text ends with sentence and space', () => {
+    expect(trimToLastSentence('Ends with sentence. ')).to.equal('Ends with sentence.');
+  });
+
+  it('returns empty string for empty input', () => {
+    expect(trimToLastSentence('')).to.equal('');
+  });
+
+  it('handles single word sentence followed by trailing space', () => {
+    expect(trimToLastSentence('Only. ')).to.equal('Only.');
   });
 });

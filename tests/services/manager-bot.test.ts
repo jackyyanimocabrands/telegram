@@ -187,7 +187,7 @@ describe('handleManagerBotMessage', () => {
   });
 
   it('sendMessageDraft is called with MarkdownV2 content during stream (fire-and-forget)', async () => {
-    async function* stream() { yield 'chunk1'; yield 'chunk2'; yield 'chunk3'; }
+    async function* stream() { yield 'Hello world. '; yield 'chunk2'; yield 'chunk3'; }
     agentServiceStub.chatStream.returns(stream());
     const message = makeMessage({ chatId: 100 });
 
@@ -196,6 +196,26 @@ describe('handleManagerBotMessage', () => {
     // At least one draft call with MarkdownV2 content (fire-and-forget during stream)
     const mdCalls = mockTelegram.sendMessageDraft.args.filter((args: unknown[]) => args[4] === 'MarkdownV2');
     expect(mdCalls.length).to.be.greaterThan(0);
+  });
+
+  it('sendMessageDraft during stream shows only complete sentences', async () => {
+    async function* stream() {
+      yield 'Hello world';
+      yield '. ';
+      yield 'Partial chunk';
+    }
+    agentServiceStub.chatStream.returns(stream());
+    const message = makeMessage({ chatId: 100 });
+
+    await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+
+    const mdCalls = mockTelegram.sendMessageDraft.args.filter((args: unknown[]) => args[4] === 'MarkdownV2');
+    // If any MarkdownV2 draft was sent, it must contain a complete sentence
+    for (const args of mdCalls) {
+      const content: string = args[3];
+      // content must end with a sentence-terminal punctuation
+      expect(content).to.match(/[.!?]$/);
+    }
   });
 
   it('sendChatAction is refreshed after TYPING_REFRESH_MS during a long stream', async () => {

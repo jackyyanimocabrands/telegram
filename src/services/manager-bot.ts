@@ -5,7 +5,7 @@ import { interpolate } from '../utils/interpolate.js';
 import type { TelegramClient } from './telegram-api.js';
 import type { AgentService } from './agent.js';
 import type { Message } from '../types/telegram.js';
-import { splitAtSentenceBoundary } from '../utils/split-message.js';
+import { splitAtSentenceBoundary, trimToLastSentence } from '../utils/split-message.js';
 import { toTelegramMarkdownV2 } from '../utils/telegram-markdownv2.js';
 
 const TELEGRAM_USERNAME_RE = /^[a-zA-Z0-9_]{5,32}$/;
@@ -119,10 +119,13 @@ export async function handleManagerBotMessage(
       const now = Date.now();
       await tryTyping();
       if (throttleMs === 0 || now - lastSentAt >= throttleMs) {
-        telegram.sendMessageDraft(managerBotToken, chatId, draftId, toTelegramMarkdownV2(accumulated), 'MarkdownV2').catch((err: unknown) => {
-          logger.warn({ err, chatId }, 'sendMessageDraft (stream) failed (non-fatal)');
-        });
-        lastSentAt = now;
+        const displayText = trimToLastSentence(accumulated);
+        if (displayText) {
+          telegram.sendMessageDraft(managerBotToken, chatId, draftId, toTelegramMarkdownV2(displayText), 'MarkdownV2').catch((err: unknown) => {
+            logger.warn({ err, chatId }, 'sendMessageDraft (stream) failed (non-fatal)');
+          });
+          lastSentAt = now;
+        }
       }
     }
 
