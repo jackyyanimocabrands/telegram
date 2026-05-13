@@ -158,14 +158,66 @@ describe('child-bot AI integration', () => {
 
   // ── Regular message → AI chat ─────────────────────────────────────────────
 
-  it('regular message calls agentService.chat with correct args', async () => {
+  it('regular message calls agentService.chatStream with correct args', async () => {
     await handleChildBotMessage(BOT_ID, makeMessage('hello there'), agentServiceStub);
 
     expect(agentServiceStub.chatStream.calledOnce).to.be.true;
     expect(agentServiceStub.chatStream.firstCall.args[0]).to.equal(String(BOT_ID));
     expect(agentServiceStub.chatStream.firstCall.args[1]).to.equal(USER_ID);
     expect(agentServiceStub.chatStream.firstCall.args[2]).to.equal('hello there');
+  });
+
+  it('sends thinking bubble (empty draft) before stream starts', async () => {
+    await handleChildBotMessage(BOT_ID, makeMessage('hello there'), agentServiceStub);
+
+    expect(sendMessageDraftStub.calledOnce).to.be.true;
+    expect(sendMessageDraftStub.firstCall.args[0]).to.equal(TOKEN);
+    expect(sendMessageDraftStub.firstCall.args[1]).to.equal(CHAT_ID);
+    expect(sendMessageDraftStub.firstCall.args[3]).to.equal('');
+  });
+
+  it('sendChatAction typing is called when first token arrives (not before stream)', async () => {
+    // sendMessageDraft (thinking bubble) is called before stream; sendChatAction after first token
+    await handleChildBotMessage(BOT_ID, makeMessage('hello there'), agentServiceStub);
+
     expect(sendChatActionStub.calledWith(TOKEN, CHAT_ID, 'typing')).to.be.true;
+    // sendMessageDraft must be called before sendChatAction
+    const draftOrder = sendMessageDraftStub.firstCall.callCount;
+    const actionOrder = sendChatActionStub.firstCall.callCount;
+    expect(sendMessageDraftStub.calledBefore(sendChatActionStub)).to.be.true;
+    void draftOrder; void actionOrder;
+  });
+
+  it('sendMessageDraft is not called with HTML content during the stream loop', async () => {
+    async function* stream() { yield 'chunk1'; yield 'chunk2'; yield 'chunk3'; }
+    agentServiceStub.chatStream.returns(stream());
+
+    await handleChildBotMessage(BOT_ID, makeMessage('hello'), agentServiceStub);
+
+    // Only one call total — the thinking bubble with empty string
+    expect(sendMessageDraftStub.callCount).to.equal(1);
+    expect(sendMessageDraftStub.firstCall.args[3]).to.equal('');
+  });
+
+  it('sendChatAction is refreshed after TYPING_REFRESH_MS during a long stream', async () => {
+    const TYPING_REFRESH_MS = 4000;
+    let nowValue = 1000;
+    const dateNowStub = sinon.stub(Date, 'now').callsFake(() => nowValue);
+
+    async function* longStream() {
+      yield 'first';        // now = 1000 → triggers first typing call
+      nowValue += TYPING_REFRESH_MS + 1; // advance time past refresh threshold
+      yield 'second';       // now = 5001 → should trigger second typing call
+    }
+    agentServiceStub.chatStream.returns(longStream());
+
+    await handleChildBotMessage(BOT_ID, makeMessage('long question'), agentServiceStub);
+
+    dateNowStub.restore();
+
+    // sendChatAction should be called twice: once on first token, once after refresh
+    expect(sendChatActionStub.callCount).to.equal(2);
+    expect(sendChatActionStub.alwaysCalledWith(TOKEN, CHAT_ID, 'typing')).to.be.true;
   });
 
   it('regular message sends AI reply to user', async () => {

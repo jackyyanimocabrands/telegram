@@ -3,7 +3,6 @@ import { getDecryptedBotToken } from './token-store.js';
 import { logger } from '../utils/logger.js';
 import type { Message, CallbackQuery } from '../types/telegram.js';
 import type { AgentService } from './agent.js';
-import { env } from '../config/env.js';
 import { splitAtSentenceBoundary } from '../utils/split-message.js';
 import { toTelegramHtml } from '../utils/telegram-html.js';
 
@@ -212,35 +211,43 @@ export async function handleChildBotMessage(
     // ── Normal chat → AI streaming response ─────────────────────────────
     logger.debug({ botId, chatId }, 'handleChildBotMessage: routing to AI (streaming)');
 
-    // sendChatAction — universally supported typing indicator (all clients)
-    await telegram.sendChatAction(token, chatId, 'typing');
+    // Step 2: thinking bubble — fire-and-forget; failure must never abort the response
+    try {
+      await telegram.sendMessageDraft(token, chatId, 1, '');
+    } catch (err) {
+      logger.warn({ err, botId, chatId }, 'sendMessageDraft (thinking) failed (non-fatal)');
+    }
 
-    // trySendDraft — isolated so failures never abort the AI response
-    const trySendDraft = async (text: string): Promise<void> => {
+    // Step 3: typing indicator helper — refreshed every 4 s; failure is non-fatal
+    const TYPING_REFRESH_MS = 4000;
+    const tryTyping = async (): Promise<void> => {
       try {
-        await telegram.sendMessageDraft(token, chatId, 1, text, text ? 'HTML' : undefined);
+        await telegram.sendChatAction(token, chatId, 'typing');
       } catch (err) {
-        logger.warn({ err, botId, chatId }, 'sendMessageDraft failed (non-fatal), continuing stream');
+        logger.warn({ err, botId, chatId }, 'sendChatAction failed (non-fatal)');
       }
     };
 
-    // "Thinking…" placeholder (Bot API 10.0+; silently ignored on older clients)
-    await trySendDraft('');
-
     let accumulated = '';
-    let lastSentAt = 0;
-    const throttleMs = env.STREAM_THROTTLE_MS;
+    let typingStarted = false;
+    let lastTypingAt = 0;
 
     for await (const chunk of agentService.chatStream(botIdStr, userId, text)) {
       accumulated += chunk;
       const now = Date.now();
-      if (throttleMs === 0 || now - lastSentAt >= throttleMs) {
-        await trySendDraft(toTelegramHtml(accumulated));
-        lastSentAt = now;
+      if (!typingStarted) {
+        // First token: switch from thinking bubble to typing indicator
+        await tryTyping();
+        typingStarted = true;
+        lastTypingAt = now;
+      } else if (now - lastTypingAt >= TYPING_REFRESH_MS) {
+        // Keep typing indicator alive for long responses
+        await tryTyping();
+        lastTypingAt = now;
       }
     }
 
-    // Persist the complete response (split at sentence boundary if > 4096 chars)
+    // Step 4: stream done — send final reply; Bot API auto-removes the draft bubble
     const parts = splitAtSentenceBoundary(accumulated);
     for (const part of parts) {
       await telegram.sendMessage(token, chatId, toTelegramHtml(part), { parse_mode: 'HTML' });

@@ -155,7 +155,7 @@ describe('handleManagerBotMessage', () => {
     expect(fallback).to.include('try again');
   });
 
-  it('passes correct botId and userId to agentService.chat', async () => {
+  it('passes correct botId and userId to agentService.chatStream', async () => {
     const message = makeMessage({ fromId: 77, text: 'test message' });
 
     await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
@@ -163,7 +163,61 @@ describe('handleManagerBotMessage', () => {
     expect(agentServiceStub.chatStream.firstCall.args[0]).to.equal('manager');
     expect(agentServiceStub.chatStream.firstCall.args[1]).to.equal(77);
     expect(agentServiceStub.chatStream.firstCall.args[2]).to.equal('test message');
-    expect(mockTelegram.sendChatAction.calledWith(MANAGER_TOKEN, makeMessage({ fromId: 77 }).chat.id, 'typing')).to.be.true;
+  });
+
+  it('sends thinking bubble (empty draft) before stream starts', async () => {
+    const message = makeMessage({ chatId: 100 });
+
+    await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+
+    expect(mockTelegram.sendMessageDraft.calledOnce).to.be.true;
+    expect(mockTelegram.sendMessageDraft.firstCall.args[0]).to.equal(MANAGER_TOKEN);
+    expect(mockTelegram.sendMessageDraft.firstCall.args[1]).to.equal(100);
+    expect(mockTelegram.sendMessageDraft.firstCall.args[3]).to.equal('');
+  });
+
+  it('sendChatAction typing is called when first token arrives', async () => {
+    const message = makeMessage({ chatId: 100 });
+
+    await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+
+    expect(mockTelegram.sendChatAction.calledWith(MANAGER_TOKEN, 100, 'typing')).to.be.true;
+    // Thinking bubble (draft) must be sent before the typing action
+    expect(mockTelegram.sendMessageDraft.calledBefore(mockTelegram.sendChatAction)).to.be.true;
+  });
+
+  it('sendMessageDraft is not called with HTML content during the stream loop', async () => {
+    async function* stream() { yield 'chunk1'; yield 'chunk2'; yield 'chunk3'; }
+    agentServiceStub.chatStream.returns(stream());
+    const message = makeMessage({ chatId: 100 });
+
+    await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+
+    // Only one draft call total — the thinking bubble with empty string
+    expect(mockTelegram.sendMessageDraft.callCount).to.equal(1);
+    expect(mockTelegram.sendMessageDraft.firstCall.args[3]).to.equal('');
+  });
+
+  it('sendChatAction is refreshed after TYPING_REFRESH_MS during a long stream', async () => {
+    const TYPING_REFRESH_MS = 4000;
+    let nowValue = 1000;
+    const dateNowStub = sinon.stub(Date, 'now').callsFake(() => nowValue);
+
+    async function* longStream() {
+      yield 'first';                          // now = 1000 → triggers first typing call
+      nowValue += TYPING_REFRESH_MS + 1;      // advance past refresh threshold
+      yield 'second';                         // now = 5001 → should trigger second typing call
+    }
+    agentServiceStub.chatStream.returns(longStream());
+    const message = makeMessage({ chatId: 100 });
+
+    await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+
+    dateNowStub.restore();
+
+    // sendChatAction should be called twice: once on first token, once after refresh
+    expect(mockTelegram.sendChatAction.callCount).to.equal(2);
+    expect(mockTelegram.sendChatAction.alwaysCalledWith(MANAGER_TOKEN, 100, 'typing')).to.be.true;
   });
 
   it('sendMessageDraft failure does not prevent final sendMessage', async () => {
