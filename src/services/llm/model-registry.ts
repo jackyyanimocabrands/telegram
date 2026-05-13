@@ -20,6 +20,7 @@ export const MODEL_REGISTRY: Record<string, ModelConfig> = {
   'deepseek-reasoner':            { maxTokens: 128000 },
   'deepseek-v3':                  { maxTokens: 128000 },
   'deepseek-v4-pro':              { maxTokens: 128000 },
+  'deepseek-v4-flash':            { maxTokens: 128000 },
 };
 
 const FALLBACK_CONFIG: ModelConfig = { maxTokens: 4096 };

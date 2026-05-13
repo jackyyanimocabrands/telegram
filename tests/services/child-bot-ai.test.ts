@@ -13,6 +13,8 @@ import esmock from 'esmock';
 describe('child-bot AI integration', () => {
   let handleChildBotMessage: any;
   let sendMessageStub: sinon.SinonStub;
+  let sendMessageDraftStub: sinon.SinonStub;
+  let sendChatActionStub: sinon.SinonStub;
   let getDecryptedBotTokenStub: sinon.SinonStub;
   let agentServiceStub: {
     chat: sinon.SinonStub;
@@ -37,6 +39,8 @@ describe('child-bot AI integration', () => {
 
   beforeEach(async () => {
     sendMessageStub = sinon.stub().resolves({});
+    sendMessageDraftStub = sinon.stub().resolves(true);
+    sendChatActionStub = sinon.stub().resolves(true);
     getDecryptedBotTokenStub = sinon.stub().resolves(TOKEN);
 
     async function* defaultStream() { yield 'AI response'; }
@@ -56,7 +60,8 @@ describe('child-bot AI integration', () => {
           setMyShortDescription = sinon.stub().resolves(true);
           setMyCommands = sinon.stub().resolves(true);
           sendMessage = sendMessageStub;
-          sendMessageDraft = sinon.stub().resolves(true);
+          sendMessageDraft = sendMessageDraftStub;
+          sendChatAction = sendChatActionStub;
           answerCallbackQuery = sinon.stub().resolves(true);
         },
       },
@@ -160,6 +165,7 @@ describe('child-bot AI integration', () => {
     expect(agentServiceStub.chatStream.firstCall.args[0]).to.equal(String(BOT_ID));
     expect(agentServiceStub.chatStream.firstCall.args[1]).to.equal(USER_ID);
     expect(agentServiceStub.chatStream.firstCall.args[2]).to.equal('hello there');
+    expect(sendChatActionStub.calledWith(TOKEN, CHAT_ID, 'typing')).to.be.true;
   });
 
   it('regular message sends AI reply to user', async () => {
@@ -229,5 +235,19 @@ describe('child-bot AI integration', () => {
     const replyText: string = sendMessageStub.firstCall.args[2];
     // Reply must mention the actual char count (2001)
     expect(replyText).to.include('2001');
+  });
+
+  it('sendMessageDraft failure does not prevent final sendMessage', async () => {
+    // make sendMessageDraft always throw
+    sendMessageDraftStub.rejects(new Error('draft API unavailable'));
+    async function* stream() { yield 'safe reply'; }
+    agentServiceStub.chatStream.returns(stream());
+
+    await handleChildBotMessage(BOT_ID, makeMessage('hello'), agentServiceStub);
+
+    // final sendMessage must still be called with the AI reply
+    expect(sendMessageStub.called).to.be.true;
+    const text: string = sendMessageStub.firstCall.args[2];
+    expect(text).to.include('safe reply');
   });
 });

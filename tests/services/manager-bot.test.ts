@@ -163,6 +163,20 @@ describe('handleManagerBotMessage', () => {
     expect(agentServiceStub.chatStream.firstCall.args[0]).to.equal('manager');
     expect(agentServiceStub.chatStream.firstCall.args[1]).to.equal(77);
     expect(agentServiceStub.chatStream.firstCall.args[2]).to.equal('test message');
+    expect(mockTelegram.sendChatAction.calledWith(MANAGER_TOKEN, makeMessage({ fromId: 77 }).chat.id, 'typing')).to.be.true;
+  });
+
+  it('sendMessageDraft failure does not prevent final sendMessage', async () => {
+    mockTelegram.sendMessageDraft.rejects(new Error('draft API unavailable'));
+    async function* stream() { yield 'safe manager reply'; }
+    agentServiceStub.chatStream.returns(stream());
+    const message = makeMessage({ chatId: 100 });
+
+    await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+
+    expect(mockTelegram.sendMessage.called).to.be.true;
+    const text: string = mockTelegram.sendMessage.firstCall.args[2];
+    expect(text).to.include('safe manager reply');
   });
 
   describe('env prompt overrides', () => {

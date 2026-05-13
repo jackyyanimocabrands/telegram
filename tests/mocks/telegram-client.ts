@@ -21,6 +21,7 @@ export class MockTelegramClient implements TelegramClient {
   getWebhookInfo = sinon.stub();
   sendMessage = sinon.stub();
   sendMessageDraft = sinon.stub().resolves(true);
+  sendChatAction = sinon.stub().resolves(true);
   setMyName = sinon.stub().resolves(true);
   setMyDescription = sinon.stub().resolves(true);
   setMyShortDescription = sinon.stub().resolves(true);

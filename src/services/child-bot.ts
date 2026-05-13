@@ -212,8 +212,20 @@ export async function handleChildBotMessage(
     // ── Normal chat → AI streaming response ─────────────────────────────
     logger.debug({ botId, chatId }, 'handleChildBotMessage: routing to AI (streaming)');
 
-    // Show "Thinking…" placeholder immediately
-    await telegram.sendMessageDraft(token, chatId, 1, '');
+    // sendChatAction — universally supported typing indicator (all clients)
+    await telegram.sendChatAction(token, chatId, 'typing');
+
+    // trySendDraft — isolated so failures never abort the AI response
+    const trySendDraft = async (text: string): Promise<void> => {
+      try {
+        await telegram.sendMessageDraft(token, chatId, 1, text, text ? 'HTML' : undefined);
+      } catch (err) {
+        logger.warn({ err, botId, chatId }, 'sendMessageDraft failed (non-fatal), continuing stream');
+      }
+    };
+
+    // "Thinking…" placeholder (Bot API 10.0+; silently ignored on older clients)
+    await trySendDraft('');
 
     let accumulated = '';
     let lastSentAt = 0;
@@ -223,7 +235,7 @@ export async function handleChildBotMessage(
       accumulated += chunk;
       const now = Date.now();
       if (throttleMs === 0 || now - lastSentAt >= throttleMs) {
-        await telegram.sendMessageDraft(token, chatId, 1, toTelegramHtml(accumulated), 'HTML');
+        await trySendDraft(toTelegramHtml(accumulated));
         lastSentAt = now;
       }
     }

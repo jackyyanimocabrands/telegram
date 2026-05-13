@@ -86,8 +86,20 @@ export async function handleManagerBotMessage(
       }
     }
 
-    // Show "Thinking…" placeholder immediately
-    await telegram.sendMessageDraft(managerBotToken, chatId, 1, '');
+    // sendChatAction — universally supported typing indicator (all clients)
+    await telegram.sendChatAction(managerBotToken, chatId, 'typing');
+
+    // trySendDraft — isolated so failures never abort the AI response
+    const trySendDraft = async (text: string): Promise<void> => {
+      try {
+        await telegram.sendMessageDraft(managerBotToken, chatId, 1, text, text ? 'HTML' : undefined);
+      } catch (err) {
+        logger.warn({ err, chatId }, 'sendMessageDraft failed (non-fatal), continuing stream');
+      }
+    };
+
+    // "Thinking…" placeholder (Bot API 10.0+; silently ignored on older clients)
+    await trySendDraft('');
 
     let accumulated = '';
     let lastSentAt = 0;
@@ -97,7 +109,7 @@ export async function handleManagerBotMessage(
       accumulated += chunk;
       const now = Date.now();
       if (throttleMs === 0 || now - lastSentAt >= throttleMs) {
-        await telegram.sendMessageDraft(managerBotToken, chatId, 1, toTelegramHtml(accumulated), 'HTML');
+        await trySendDraft(toTelegramHtml(accumulated));
         lastSentAt = now;
       }
     }

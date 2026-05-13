@@ -49,6 +49,7 @@ describe('child-bot service', () => {
           setMyCommands = setMyCommandsStub;
           sendMessage = sendMessageStub;
           sendMessageDraft = sinon.stub().resolves(true);
+          sendChatAction = sinon.stub().resolves(true);
           answerCallbackQuery = answerCallbackQueryStub;
         },
       },
