@@ -245,7 +245,7 @@ export async function handleChildBotMessage(
       const now = Date.now();
       await tryTyping();
       if (throttleMs === 0 || now - lastSentAt >= throttleMs) {
-        const displayText = trimToLastSentence(accumulated);
+        const displayText = splitAtSentenceBoundary(trimToLastSentence(accumulated), 4096)[0] ?? '';
         if (displayText) {
           telegram.sendMessageDraft(token, chatId, draftId, toTelegramMarkdownV2(displayText), 'MarkdownV2').catch((err: unknown) => {
             logger.warn({ err, botId, chatId }, 'sendMessageDraft (stream) failed (non-fatal)');

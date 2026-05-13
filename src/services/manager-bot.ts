@@ -119,7 +119,7 @@ export async function handleManagerBotMessage(
       const now = Date.now();
       await tryTyping();
       if (throttleMs === 0 || now - lastSentAt >= throttleMs) {
-        const displayText = trimToLastSentence(accumulated);
+        const displayText = splitAtSentenceBoundary(trimToLastSentence(accumulated), 4096)[0] ?? '';
         if (displayText) {
           telegram.sendMessageDraft(managerBotToken, chatId, draftId, toTelegramMarkdownV2(displayText), 'MarkdownV2').catch((err: unknown) => {
             logger.warn({ err, chatId }, 'sendMessageDraft (stream) failed (non-fatal)');
