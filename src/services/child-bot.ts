@@ -5,6 +5,7 @@ import type { Message, CallbackQuery } from '../types/telegram.js';
 import type { AgentService } from './agent.js';
 import { env } from '../config/env.js';
 import { splitAtSentenceBoundary } from '../utils/split-message.js';
+import { toTelegramHtml } from '../utils/telegram-html.js';
 
 /**
  * Factory function — tests can esmock this to provide a mock Telegram client.
@@ -222,7 +223,7 @@ export async function handleChildBotMessage(
       accumulated += chunk;
       const now = Date.now();
       if (throttleMs === 0 || now - lastSentAt >= throttleMs) {
-        await telegram.sendMessageDraft(token, chatId, 1, accumulated);
+        await telegram.sendMessageDraft(token, chatId, 1, toTelegramHtml(accumulated), 'HTML');
         lastSentAt = now;
       }
     }
@@ -230,7 +231,7 @@ export async function handleChildBotMessage(
     // Persist the complete response (split at sentence boundary if > 4096 chars)
     const parts = splitAtSentenceBoundary(accumulated);
     for (const part of parts) {
-      await telegram.sendMessage(token, chatId, part);
+      await telegram.sendMessage(token, chatId, toTelegramHtml(part), { parse_mode: 'HTML' });
     }
   } catch (err) {
     logger.error({ err, botId, chatId, from: message.from?.id }, 'handleChildBotMessage: failed');

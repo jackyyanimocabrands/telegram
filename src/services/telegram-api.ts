@@ -57,6 +57,7 @@ export interface TelegramClient {
     chatId: number | string,
     draftId: number,
     text?: string,
+    parseMode?: string,
   ): Promise<boolean>;
   setMyName(token: string, name: string, description?: string): Promise<boolean>;
   setMyDescription(token: string, description: string): Promise<boolean>;
@@ -205,13 +206,16 @@ export class HttpTelegramClient implements TelegramClient {
     chatId: number | string,
     draftId: number,
     text?: string,
+    parseMode?: string,
   ): Promise<boolean> {
     logger.debug({ chatId, draftId, textLength: (text ?? '').length }, 'sendMessageDraft: called');
-    return this.call<boolean>(token, 'sendMessageDraft', {
+    const body: Record<string, unknown> = {
       chat_id: chatId,
       draft_id: draftId,
       text: text ?? '',
-    });
+    };
+    if (parseMode) body['parse_mode'] = parseMode;
+    return this.call<boolean>(token, 'sendMessageDraft', body);
   }
 
   async setMyName(token: string, name: string, _description?: string): Promise<boolean> {

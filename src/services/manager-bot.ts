@@ -6,6 +6,7 @@ import type { TelegramClient } from './telegram-api.js';
 import type { AgentService } from './agent.js';
 import type { Message } from '../types/telegram.js';
 import { splitAtSentenceBoundary } from '../utils/split-message.js';
+import { toTelegramHtml } from '../utils/telegram-html.js';
 
 const TELEGRAM_USERNAME_RE = /^[a-zA-Z0-9_]{5,32}$/;
 
@@ -96,7 +97,7 @@ export async function handleManagerBotMessage(
       accumulated += chunk;
       const now = Date.now();
       if (throttleMs === 0 || now - lastSentAt >= throttleMs) {
-        await telegram.sendMessageDraft(managerBotToken, chatId, 1, accumulated);
+        await telegram.sendMessageDraft(managerBotToken, chatId, 1, toTelegramHtml(accumulated), 'HTML');
         lastSentAt = now;
       }
     }
@@ -104,7 +105,7 @@ export async function handleManagerBotMessage(
     // Persist the complete response (split at sentence boundary if > 4096 chars)
     const parts = splitAtSentenceBoundary(accumulated);
     for (const part of parts) {
-      await telegram.sendMessage(managerBotToken, chatId, part);
+      await telegram.sendMessage(managerBotToken, chatId, toTelegramHtml(part), { parse_mode: 'HTML' });
     }
 
     logger.debug({ chatId, userId: from.id }, 'handleManagerBotMessage: reply sent');
