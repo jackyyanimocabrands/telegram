@@ -6,7 +6,7 @@ import type { TelegramClient } from './telegram-api.js';
 import type { AgentService } from './agent.js';
 import type { Message } from '../types/telegram.js';
 import { splitAtSentenceBoundary } from '../utils/split-message.js';
-import { toTelegramHtml } from '../utils/telegram-html.js';
+import { toTelegramMarkdownV2 } from '../utils/telegram-markdownv2.js';
 
 const TELEGRAM_USERNAME_RE = /^[a-zA-Z0-9_]{5,32}$/;
 
@@ -86,16 +86,16 @@ export async function handleManagerBotMessage(
       }
     }
 
-    // Step 2: thinking bubble — fire-and-forget; failure must never abort the response
-    try {
-      await telegram.sendMessageDraft(managerBotToken, chatId, 1, '');
-    } catch (err) {
-      logger.warn({ err, chatId }, 'sendMessageDraft (thinking) failed (non-fatal)');
-    }
+    // draft_id: unique integer per message
+    const draftId = Math.floor(Date.now() + Math.random() * 1000);
 
-    // Step 3: typing indicator helper — refreshed every 4 s; failure is non-fatal
+    // tryTyping: sendChatAction with internal 4s throttle — failure is non-fatal
     const TYPING_REFRESH_MS = 4000;
+    let lastTypingAt = 0;
     const tryTyping = async (): Promise<void> => {
+      const now = Date.now();
+      if (now - lastTypingAt < TYPING_REFRESH_MS) return;
+      lastTypingAt = now;
       try {
         await telegram.sendChatAction(managerBotToken, chatId, 'typing');
       } catch (err) {
@@ -103,29 +103,33 @@ export async function handleManagerBotMessage(
       }
     };
 
+    // Thinking bubble: plain text, no parse_mode; delayed 250 ms so fast replies don't flash
+    setTimeout(() => {
+      telegram.sendMessageDraft(managerBotToken, chatId, draftId, 'Thinking').catch((err: unknown) => {
+        logger.warn({ err, chatId }, 'sendMessageDraft (thinking) failed (non-fatal)');
+      });
+    }, 250);
+
     let accumulated = '';
-    let typingStarted = false;
-    let lastTypingAt = 0;
+    let lastSentAt = 0;
+    const throttleMs = env.STREAM_THROTTLE_MS;
 
     for await (const chunk of agentService.chatStream(managerBotId, from.id, text, systemPrompt)) {
       accumulated += chunk;
       const now = Date.now();
-      if (!typingStarted) {
-        // First token: switch from thinking bubble to typing indicator
-        await tryTyping();
-        typingStarted = true;
-        lastTypingAt = now;
-      } else if (now - lastTypingAt >= TYPING_REFRESH_MS) {
-        // Keep typing indicator alive for long responses
-        await tryTyping();
-        lastTypingAt = now;
+      await tryTyping();
+      if (throttleMs === 0 || now - lastSentAt >= throttleMs) {
+        telegram.sendMessageDraft(managerBotToken, chatId, draftId, toTelegramMarkdownV2(accumulated), 'MarkdownV2').catch((err: unknown) => {
+          logger.warn({ err, chatId }, 'sendMessageDraft (stream) failed (non-fatal)');
+        });
+        lastSentAt = now;
       }
     }
 
-    // Step 4: stream done — send final reply; Bot API auto-removes the draft bubble
+    // Final reply: splitAtSentenceBoundary guards against 4096-char Telegram limit
     const parts = splitAtSentenceBoundary(accumulated);
     for (const part of parts) {
-      await telegram.sendMessage(managerBotToken, chatId, toTelegramHtml(part), { parse_mode: 'HTML' });
+      await telegram.sendMessage(managerBotToken, chatId, toTelegramMarkdownV2(part), { parse_mode: 'MarkdownV2' });
     }
 
     logger.debug({ chatId, userId: from.id }, 'handleManagerBotMessage: reply sent');

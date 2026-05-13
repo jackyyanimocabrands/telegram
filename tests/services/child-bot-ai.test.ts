@@ -167,47 +167,44 @@ describe('child-bot AI integration', () => {
     expect(agentServiceStub.chatStream.firstCall.args[2]).to.equal('hello there');
   });
 
-  it('sends thinking bubble (empty draft) before stream starts', async () => {
-    await handleChildBotMessage(BOT_ID, makeMessage('hello there'), agentServiceStub);
-
-    expect(sendMessageDraftStub.calledOnce).to.be.true;
-    expect(sendMessageDraftStub.firstCall.args[0]).to.equal(TOKEN);
-    expect(sendMessageDraftStub.firstCall.args[1]).to.equal(CHAT_ID);
-    expect(sendMessageDraftStub.firstCall.args[3]).to.equal('');
+  it('sends thinking bubble after 250ms delay before stream starts', async () => {
+    const clock = sinon.useFakeTimers();
+    try {
+      const promise = handleChildBotMessage(BOT_ID, makeMessage('hello there'), agentServiceStub);
+      await clock.tickAsync(300); // advance past 250ms
+      await promise;
+      expect(sendMessageDraftStub.calledWith(TOKEN, CHAT_ID, sinon.match.number, 'Thinking')).to.be.true;
+    } finally {
+      clock.restore();
+    }
   });
 
   it('sendChatAction typing is called when first token arrives (not before stream)', async () => {
-    // sendMessageDraft (thinking bubble) is called before stream; sendChatAction after first token
     await handleChildBotMessage(BOT_ID, makeMessage('hello there'), agentServiceStub);
 
     expect(sendChatActionStub.calledWith(TOKEN, CHAT_ID, 'typing')).to.be.true;
-    // sendMessageDraft must be called before sendChatAction
-    const draftOrder = sendMessageDraftStub.firstCall.callCount;
-    const actionOrder = sendChatActionStub.firstCall.callCount;
-    expect(sendMessageDraftStub.calledBefore(sendChatActionStub)).to.be.true;
-    void draftOrder; void actionOrder;
   });
 
-  it('sendMessageDraft is not called with HTML content during the stream loop', async () => {
+  it('sendMessageDraft is called with MarkdownV2 content during stream (fire-and-forget)', async () => {
     async function* stream() { yield 'chunk1'; yield 'chunk2'; yield 'chunk3'; }
     agentServiceStub.chatStream.returns(stream());
 
     await handleChildBotMessage(BOT_ID, makeMessage('hello'), agentServiceStub);
 
-    // Only one call total — the thinking bubble with empty string
-    expect(sendMessageDraftStub.callCount).to.equal(1);
-    expect(sendMessageDraftStub.firstCall.args[3]).to.equal('');
+    // At least one draft call with MarkdownV2 content (fire-and-forget during stream)
+    const mdCalls = sendMessageDraftStub.args.filter((args: unknown[]) => args[4] === 'MarkdownV2');
+    expect(mdCalls.length).to.be.greaterThan(0);
   });
 
   it('sendChatAction is refreshed after TYPING_REFRESH_MS during a long stream', async () => {
     const TYPING_REFRESH_MS = 4000;
-    let nowValue = 1000;
+    let nowValue = TYPING_REFRESH_MS + 1; // start above threshold so first chunk fires immediately
     const dateNowStub = sinon.stub(Date, 'now').callsFake(() => nowValue);
 
     async function* longStream() {
-      yield 'first';        // now = 1000 → triggers first typing call
+      yield 'first';        // now = 4001 → triggers first typing call (4001 - 0 >= 4000)
       nowValue += TYPING_REFRESH_MS + 1; // advance time past refresh threshold
-      yield 'second';       // now = 5001 → should trigger second typing call
+      yield 'second';       // now = 8002 → should trigger second typing call (8002 - 4001 >= 4000)
     }
     agentServiceStub.chatStream.returns(longStream());
 
