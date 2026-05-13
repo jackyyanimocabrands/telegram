@@ -47,6 +47,8 @@ const envSchema = z.object({
   // Manager bot system prompts (optional — hardcoded defaults used if absent)
   MANAGER_ONBOARDING_PROMPT: z.string().optional(),
   MANAGER_SETTINGS_PROMPT: z.string().optional(),
+  // Streaming — minimum ms between sendMessageDraft calls; 0 = no throttle (full throttle)
+  STREAM_THROTTLE_MS: z.coerce.number().int().min(0).default(0),
 }).superRefine((data, ctx) => {
   // DEFAULT_LLM_PROVIDER key requirements
   if (data.DEFAULT_LLM_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {

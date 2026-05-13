@@ -16,6 +16,7 @@ describe('child-bot service', () => {
   let getDecryptedBotTokenStub: sinon.SinonStub;
   let agentServiceStub: {
     chat: sinon.SinonStub;
+    chatStream: sinon.SinonStub;
     clearContext: sinon.SinonStub;
     switchProvider: sinon.SinonStub;
     generateWarmPrompt: sinon.SinonStub;
@@ -30,8 +31,10 @@ describe('child-bot service', () => {
     answerCallbackQueryStub = sinon.stub().resolves(true);
     getDecryptedBotTokenStub = sinon.stub().resolves('child-token-123');
 
+    async function* defaultStream() { yield 'AI reply'; }
     agentServiceStub = {
       chat: sinon.stub().resolves('AI reply'),
+      chatStream: sinon.stub().returns(defaultStream()),
       clearContext: sinon.stub().resolves(),
       switchProvider: sinon.stub().resolves(),
       generateWarmPrompt: sinon.stub().resolves(null),
@@ -45,6 +48,7 @@ describe('child-bot service', () => {
           setMyShortDescription = setMyShortDescriptionStub;
           setMyCommands = setMyCommandsStub;
           sendMessage = sendMessageStub;
+          sendMessageDraft = sinon.stub().resolves(true);
           answerCallbackQuery = answerCallbackQueryStub;
         },
       },
@@ -116,7 +120,8 @@ describe('child-bot service', () => {
     });
 
     it('routes regular messages to agentService.chat (no echo)', async () => {
-      agentServiceStub.chat.resolves('AI answer here');
+      async function* stream() { yield 'AI answer here'; }
+      agentServiceStub.chatStream.returns(stream());
       await handleChildBotMessage(42, makeMessage('hello world'), agentServiceStub);
       expect(sendMessageStub.calledOnce).to.be.true;
       expect(sendMessageStub.firstCall.args[2]).to.equal('AI answer here');
@@ -126,8 +131,8 @@ describe('child-bot service', () => {
 
     it('calls agentService.chat with string botId', async () => {
       await handleChildBotMessage(42, makeMessage('test'), agentServiceStub);
-      expect(agentServiceStub.chat.calledOnce).to.be.true;
-      expect(agentServiceStub.chat.firstCall.args[0]).to.equal('42');
+      expect(agentServiceStub.chatStream.calledOnce).to.be.true;
+      expect(agentServiceStub.chatStream.firstCall.args[0]).to.equal('42');
     });
 
     it('sends error fallback when getDecryptedBotToken fails', async () => {

@@ -3,6 +3,8 @@ import { getDecryptedBotToken } from './token-store.js';
 import { logger } from '../utils/logger.js';
 import type { Message, CallbackQuery } from '../types/telegram.js';
 import type { AgentService } from './agent.js';
+import { env } from '../config/env.js';
+import { splitAtSentenceBoundary } from '../utils/split-message.js';
 
 /**
  * Factory function — tests can esmock this to provide a mock Telegram client.
@@ -206,10 +208,30 @@ export async function handleChildBotMessage(
       return;
     }
 
-    // ── Normal chat → AI response ─────────────────────────────────────────
-    logger.debug({ botId, chatId }, 'handleChildBotMessage: routing to AI');
-    const reply = await agentService.chat(botIdStr, userId, text);
-    await telegram.sendMessage(token, chatId, reply);
+    // ── Normal chat → AI streaming response ─────────────────────────────
+    logger.debug({ botId, chatId }, 'handleChildBotMessage: routing to AI (streaming)');
+
+    // Show "Thinking…" placeholder immediately
+    await telegram.sendMessageDraft(token, chatId, 1, '');
+
+    let accumulated = '';
+    let lastSentAt = 0;
+    const throttleMs = env.STREAM_THROTTLE_MS;
+
+    for await (const chunk of agentService.chatStream(botIdStr, userId, text)) {
+      accumulated += chunk;
+      const now = Date.now();
+      if (throttleMs === 0 || now - lastSentAt >= throttleMs) {
+        await telegram.sendMessageDraft(token, chatId, 1, accumulated);
+        lastSentAt = now;
+      }
+    }
+
+    // Persist the complete response (split at sentence boundary if > 4096 chars)
+    const parts = splitAtSentenceBoundary(accumulated);
+    for (const part of parts) {
+      await telegram.sendMessage(token, chatId, part);
+    }
   } catch (err) {
     logger.error({ err, botId, chatId, from: message.from?.id }, 'handleChildBotMessage: failed');
     await telegram.sendMessage(

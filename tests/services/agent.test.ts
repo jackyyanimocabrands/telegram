@@ -440,4 +440,148 @@ describe('AgentService (LangGraph)', () => {
       )).to.be.true;
     });
   });
+
+  // ── chatStream() ──────────────────────────────────────────────────────────
+
+  describe('chatStream()', () => {
+    /**
+     * Build a fake compiled graph with a controllable `streamEvents` async
+     * generator and a regular `invoke` stub (needed by the AgentService
+     * constructor path, but not exercised in these tests because we inject
+     * the graph directly).
+     */
+    function makeFakeGraph(events: object[]) {
+      async function* generateEvents() {
+        for (const ev of events) {
+          yield ev;
+        }
+      }
+      return {
+        streamEvents: sinon.stub().returns(generateEvents()),
+        invoke: sinon.stub().resolves({ messages: [] }),
+      };
+    }
+
+    it('yields tokens emitted by the agent node', async () => {
+      const AgentService = await buildAgentService();
+      const convSvc = makeConvService();
+      const { stubFactory } = makeModelFactory();
+
+      const fakeGraph = makeFakeGraph([
+        { event: 'on_chat_model_stream', metadata: { langgraph_node: 'agent' }, data: { chunk: { content: 'Hello' } } },
+        { event: 'on_chat_model_stream', metadata: { langgraph_node: 'agent' }, data: { chunk: { content: ' world' } } },
+      ]);
+
+      const svc = new AgentService(convSvc, stubFactory, fakeGraph as any);
+      const tokens: string[] = [];
+      for await (const t of svc.chatStream('bot-1', 42, 'hi')) {
+        tokens.push(t);
+      }
+
+      expect(tokens).to.deep.equal(['Hello', ' world']);
+    });
+
+    it('suppresses tokens from non-agent nodes (e.g. summarize)', async () => {
+      const AgentService = await buildAgentService();
+      const convSvc = makeConvService();
+      const { stubFactory } = makeModelFactory();
+
+      const fakeGraph = makeFakeGraph([
+        { event: 'on_chat_model_stream', metadata: { langgraph_node: 'summarize' }, data: { chunk: { content: 'summarizer token' } } },
+        { event: 'on_chat_model_stream', metadata: { langgraph_node: 'agent' }, data: { chunk: { content: 'real token' } } },
+      ]);
+
+      const svc = new AgentService(convSvc, stubFactory, fakeGraph as any);
+      const tokens: string[] = [];
+      for await (const t of svc.chatStream('bot-1', 42, 'hi')) {
+        tokens.push(t);
+      }
+
+      expect(tokens).to.deep.equal(['real token']);
+      expect(tokens).to.not.include('summarizer token');
+    });
+
+    it('suppresses non-stream lifecycle events (on_chain_start, on_chain_end)', async () => {
+      const AgentService = await buildAgentService();
+      const convSvc = makeConvService();
+      const { stubFactory } = makeModelFactory();
+
+      const fakeGraph = makeFakeGraph([
+        { event: 'on_chain_start', metadata: { langgraph_node: 'agent' }, data: {} },
+        { event: 'on_chain_end', metadata: { langgraph_node: 'agent' }, data: {} },
+        { event: 'on_chat_model_stream', metadata: { langgraph_node: 'agent' }, data: { chunk: { content: 'only me' } } },
+      ]);
+
+      const svc = new AgentService(convSvc, stubFactory, fakeGraph as any);
+      const tokens: string[] = [];
+      for await (const t of svc.chatStream('bot-1', 42, 'hi')) {
+        tokens.push(t);
+      }
+
+      expect(tokens).to.deep.equal(['only me']);
+    });
+
+    it('yields nothing when agent node emits empty-string content', async () => {
+      const AgentService = await buildAgentService();
+      const convSvc = makeConvService();
+      const { stubFactory } = makeModelFactory();
+
+      const fakeGraph = makeFakeGraph([
+        { event: 'on_chat_model_stream', metadata: { langgraph_node: 'agent' }, data: { chunk: { content: '' } } },
+        { event: 'on_chat_model_stream', metadata: { langgraph_node: 'agent' }, data: { chunk: { content: '' } } },
+      ]);
+
+      const svc = new AgentService(convSvc, stubFactory, fakeGraph as any);
+      const tokens: string[] = [];
+      for await (const t of svc.chatStream('bot-1', 42, 'hi')) {
+        tokens.push(t);
+      }
+
+      expect(tokens).to.have.length(0);
+    });
+
+    it('completes cleanly with zero yields on an empty event stream', async () => {
+      const AgentService = await buildAgentService();
+      const convSvc = makeConvService();
+      const { stubFactory } = makeModelFactory();
+
+      const fakeGraph = makeFakeGraph([]);
+
+      const svc = new AgentService(convSvc, stubFactory, fakeGraph as any);
+      const tokens: string[] = [];
+      for await (const t of svc.chatStream('bot-1', 42, 'hi')) {
+        tokens.push(t);
+      }
+
+      expect(tokens).to.have.length(0);
+    });
+
+    it('propagates errors thrown by the streamEvents generator', async () => {
+      const AgentService = await buildAgentService();
+      const convSvc = makeConvService();
+      const { stubFactory } = makeModelFactory();
+
+      async function* throwingGenerator() {
+        yield { event: 'on_chat_model_stream', metadata: { langgraph_node: 'agent' }, data: { chunk: { content: 'before error' } } };
+        throw new Error('stream failure');
+      }
+
+      const fakeGraph = {
+        streamEvents: sinon.stub().returns(throwingGenerator()),
+        invoke: sinon.stub().resolves({ messages: [] }),
+      };
+
+      const svc = new AgentService(convSvc, stubFactory, fakeGraph as any);
+
+      let thrown: unknown;
+      try {
+        for await (const _t of svc.chatStream('bot-1', 42, 'hi')) { /* drain */ }
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).to.be.instanceOf(Error);
+      expect((thrown as Error).message).to.equal('stream failure');
+    });
+  });
 });

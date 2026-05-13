@@ -52,6 +52,12 @@ export interface TelegramClient {
     text: string,
     options?: Record<string, unknown>,
   ): Promise<Message>;
+  sendMessageDraft(
+    token: string,
+    chatId: number | string,
+    draftId: number,
+    text?: string,
+  ): Promise<boolean>;
   setMyName(token: string, name: string, description?: string): Promise<boolean>;
   setMyDescription(token: string, description: string): Promise<boolean>;
   setMyShortDescription(token: string, description: string): Promise<boolean>;
@@ -192,6 +198,20 @@ export class HttpTelegramClient implements TelegramClient {
   ): Promise<Message> {
     logger.debug({ chatId, textLength: text.length }, 'sendMessage: called');
     return this.call<Message>(token, 'sendMessage', { chat_id: chatId, text, ...options });
+  }
+
+  async sendMessageDraft(
+    token: string,
+    chatId: number | string,
+    draftId: number,
+    text?: string,
+  ): Promise<boolean> {
+    logger.debug({ chatId, draftId, textLength: (text ?? '').length }, 'sendMessageDraft: called');
+    return this.call<boolean>(token, 'sendMessageDraft', {
+      chat_id: chatId,
+      draft_id: draftId,
+      text: text ?? '',
+    });
   }
 
   async setMyName(token: string, name: string, _description?: string): Promise<boolean> {

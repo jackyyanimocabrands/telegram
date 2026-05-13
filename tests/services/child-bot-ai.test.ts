@@ -16,6 +16,7 @@ describe('child-bot AI integration', () => {
   let getDecryptedBotTokenStub: sinon.SinonStub;
   let agentServiceStub: {
     chat: sinon.SinonStub;
+    chatStream: sinon.SinonStub;
     clearContext: sinon.SinonStub;
     switchProvider: sinon.SinonStub;
     generateWarmPrompt: sinon.SinonStub;
@@ -38,8 +39,10 @@ describe('child-bot AI integration', () => {
     sendMessageStub = sinon.stub().resolves({});
     getDecryptedBotTokenStub = sinon.stub().resolves(TOKEN);
 
+    async function* defaultStream() { yield 'AI response'; }
     agentServiceStub = {
       chat: sinon.stub().resolves('AI response'),
+      chatStream: sinon.stub().returns(defaultStream()),
       clearContext: sinon.stub().resolves(),
       switchProvider: sinon.stub().resolves(),
       generateWarmPrompt: sinon.stub().resolves(null),
@@ -53,6 +56,7 @@ describe('child-bot AI integration', () => {
           setMyShortDescription = sinon.stub().resolves(true);
           setMyCommands = sinon.stub().resolves(true);
           sendMessage = sendMessageStub;
+          sendMessageDraft = sinon.stub().resolves(true);
           answerCallbackQuery = sinon.stub().resolves(true);
         },
       },
@@ -152,14 +156,15 @@ describe('child-bot AI integration', () => {
   it('regular message calls agentService.chat with correct args', async () => {
     await handleChildBotMessage(BOT_ID, makeMessage('hello there'), agentServiceStub);
 
-    expect(agentServiceStub.chat.calledOnce).to.be.true;
-    expect(agentServiceStub.chat.firstCall.args[0]).to.equal(String(BOT_ID));
-    expect(agentServiceStub.chat.firstCall.args[1]).to.equal(USER_ID);
-    expect(agentServiceStub.chat.firstCall.args[2]).to.equal('hello there');
+    expect(agentServiceStub.chatStream.calledOnce).to.be.true;
+    expect(agentServiceStub.chatStream.firstCall.args[0]).to.equal(String(BOT_ID));
+    expect(agentServiceStub.chatStream.firstCall.args[1]).to.equal(USER_ID);
+    expect(agentServiceStub.chatStream.firstCall.args[2]).to.equal('hello there');
   });
 
   it('regular message sends AI reply to user', async () => {
-    agentServiceStub.chat.resolves('This is the AI answer');
+    async function* stream() { yield 'This is the AI answer'; }
+    agentServiceStub.chatStream.returns(stream());
     await handleChildBotMessage(BOT_ID, makeMessage('what is 2+2?'), agentServiceStub);
 
     expect(sendMessageStub.calledOnce).to.be.true;
@@ -168,7 +173,8 @@ describe('child-bot AI integration', () => {
   });
 
   it('error in agentService.chat sends fallback error message', async () => {
-    agentServiceStub.chat.rejects(new Error('LLM offline'));
+    async function* throwingStream(): AsyncGenerator<string> { throw new Error('LLM offline'); yield ''; }
+    agentServiceStub.chatStream.returns(throwingStream());
     await handleChildBotMessage(BOT_ID, makeMessage('help me'), agentServiceStub);
 
     expect(sendMessageStub.calledOnce).to.be.true;

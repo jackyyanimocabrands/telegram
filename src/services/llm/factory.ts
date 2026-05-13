@@ -6,7 +6,7 @@ import { ChatOpenAI as ChatOpenRouter } from '@langchain/openai';
 import { env } from '../../config/env.js';
 
 export interface ILlmProviderFactory {
-  create(provider: string, model: string): Pick<BaseChatModel, 'invoke'>;
+  create(provider: string, model: string): Pick<BaseChatModel, 'invoke' | 'stream'>;
 }
 
 // Injectable constructors for test isolation
@@ -33,7 +33,7 @@ const defaultConstructors: ModelConstructors = {
 };
 
 export class LlmProviderFactory implements ILlmProviderFactory {
-  private readonly cache = new Map<string, Pick<BaseChatModel, 'invoke'>>();
+  private readonly cache = new Map<string, Pick<BaseChatModel, 'invoke' | 'stream'>>();
   private readonly ctors: ModelConstructors;
   private readonly keys: ApiKeys;
 
@@ -47,12 +47,12 @@ export class LlmProviderFactory implements ILlmProviderFactory {
     };
   }
 
-  create(provider: string, model: string): Pick<BaseChatModel, 'invoke'> {
+  create(provider: string, model: string): Pick<BaseChatModel, 'invoke' | 'stream'> {
     const cacheKey = `${provider}\0${model}`;
     const cached = this.cache.get(cacheKey);
     if (cached) return cached;
 
-    let instance: Pick<BaseChatModel, 'invoke'>;
+    let instance: Pick<BaseChatModel, 'invoke' | 'stream'>;
 
     switch (provider) {
       case 'openai':

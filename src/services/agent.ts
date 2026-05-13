@@ -23,7 +23,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
  * tests inject `{ create: () => ({ invoke: stub }) }` directly.
  */
 export interface ILlmModelFactory {
-  create(provider: string, model: string): Pick<BaseChatModel, 'invoke'>;
+  create(provider: string, model: string): Pick<BaseChatModel, 'invoke' | 'stream'>;
 }
 import { getModelConfig } from './llm/model-registry.js';
 import { estimateTokens } from './llm/token-estimator.js';
@@ -399,6 +399,56 @@ export class AgentService {
 
     logger.debug({ botId, userId, replyLength: reply.length }, 'AgentService.chat: done');
     return reply;
+  }
+
+  /**
+   * Streaming chat entrypoint — runs the LangGraph agent graph and yields token
+   * chunks from the agentNode as they are produced by the LLM.
+   *
+   * The graph runs to completion (loadHistory → agent → checkBudget → save/summarize).
+   * Only tokens from the 'agent' node are yielded; summarization tokens are suppressed.
+   *
+   * Callers are responsible for assembling the full response and persisting it
+   * via sendMessage once streaming is complete.
+   *
+   * @param botId               String bot identifier ('manager' or stringified numeric bot id)
+   * @param userId              Telegram user id (numeric)
+   * @param text                User message text
+   * @param systemPromptOverride  Optional system prompt to use instead of stored one
+   */
+  async *chatStream(
+    botId: string,
+    userId: number,
+    text: string,
+    systemPromptOverride?: string,
+  ): AsyncGenerator<string> {
+    logger.debug({ botId, userId, textLength: text.length }, 'AgentService.chatStream: start');
+
+    const initialState = {
+      messages: [],
+      userInput: text,
+      botId,
+      userId,
+      systemPromptOverride,
+    };
+
+    let tokenCount = 0;
+
+    for await (const event of this.graph.streamEvents(initialState, { version: 'v2' })) {
+      if (
+        event.event === 'on_chat_model_stream' &&
+        event.metadata?.langgraph_node === 'agent'
+      ) {
+        const content = event.data?.chunk?.content;
+        const token = typeof content === 'string' ? content : '';
+        if (token) {
+          tokenCount++;
+          yield token;
+        }
+      }
+    }
+
+    logger.debug({ botId, userId, tokenCount }, 'AgentService.chatStream: done');
   }
 
   /**

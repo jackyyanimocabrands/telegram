@@ -28,7 +28,7 @@ export class ManagedBotService {
   async #rotateAndPersistToken(
     bot: ManagedBotUpdated['bot'],
     ownerTelegramId: number,
-    ownerUserId: number,
+    ownerUserId: string,
   ): Promise<{ rotatedToken: string; webhookSecret: string }> {
     const rotatedToken = await this.telegram.replaceManagedBotToken(env.BOT_TOKEN, bot.id);
     logger.info({ botId: bot.id }, 'handleManagedBotUpdated: rotated managed bot token');

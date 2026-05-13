@@ -9,6 +9,7 @@ describe('handleManagerBotMessage', () => {
   let mockTelegram: MockTelegramClient;
   let agentServiceStub: {
     chat: sinon.SinonStub;
+    chatStream: sinon.SinonStub;
     clearContext: sinon.SinonStub;
     switchProvider: sinon.SinonStub;
     generateWarmPrompt: sinon.SinonStub;
@@ -44,8 +45,10 @@ describe('handleManagerBotMessage', () => {
     mockTelegram = new MockTelegramClient();
     mockTelegram.sendMessage.resolves({ message_id: 99, chat: { id: 100 }, date: 1 });
 
+    async function* defaultStream() { yield 'AI reply'; }
     agentServiceStub = {
       chat: sinon.stub().resolves('AI reply'),
+      chatStream: sinon.stub().returns(defaultStream()),
       clearContext: sinon.stub().resolves(),
       switchProvider: sinon.stub().resolves(),
       generateWarmPrompt: sinon.stub().resolves(null),
@@ -85,8 +88,8 @@ describe('handleManagerBotMessage', () => {
 
     await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
 
-    expect(agentServiceStub.chat.calledOnce).to.be.true;
-    const systemPrompt: string = agentServiceStub.chat.firstCall.args[3];
+    expect(agentServiceStub.chatStream.calledOnce).to.be.true;
+    const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
     expect(systemPrompt).to.include('onboarding');
     expect(systemPrompt).to.include('https://t.me/newbot');
   });
@@ -97,8 +100,8 @@ describe('handleManagerBotMessage', () => {
 
     await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
 
-    expect(agentServiceStub.chat.calledOnce).to.be.true;
-    const systemPrompt: string = agentServiceStub.chat.firstCall.args[3];
+    expect(agentServiceStub.chatStream.calledOnce).to.be.true;
+    const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
     expect(systemPrompt).to.include('onboarding');
     expect(systemPrompt).to.include('currently being set up');
   });
@@ -109,7 +112,7 @@ describe('handleManagerBotMessage', () => {
 
     await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
 
-    const systemPrompt: string = agentServiceStub.chat.firstCall.args[3];
+    const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
     expect(systemPrompt).to.include('currently being set up');
   });
 
@@ -119,15 +122,16 @@ describe('handleManagerBotMessage', () => {
 
     await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
 
-    expect(agentServiceStub.chat.calledOnce).to.be.true;
-    const systemPrompt: string = agentServiceStub.chat.firstCall.args[3];
+    expect(agentServiceStub.chatStream.calledOnce).to.be.true;
+    const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
     expect(systemPrompt).to.include('settings');
     expect(systemPrompt).to.include('@alicebot');
     expect(systemPrompt).not.to.include('onboarding');
   });
 
   it('sends LLM reply to user via telegram.sendMessage', async () => {
-    agentServiceStub.chat.resolves('Here is my helpful response');
+    async function* stream() { yield 'Here is my helpful response'; }
+    agentServiceStub.chatStream.returns(stream());
     const message = makeMessage({ chatId: 999 });
 
     await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
@@ -139,7 +143,8 @@ describe('handleManagerBotMessage', () => {
   });
 
   it('sends error fallback message when agentService.chat throws', async () => {
-    agentServiceStub.chat.rejects(new Error('LLM down'));
+    async function* throwingStream(): AsyncGenerator<string> { throw new Error('LLM down'); yield ''; }
+    agentServiceStub.chatStream.returns(throwingStream());
     const message = makeMessage({ chatId: 555 });
 
     await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
@@ -155,21 +160,22 @@ describe('handleManagerBotMessage', () => {
 
     await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
 
-    expect(agentServiceStub.chat.firstCall.args[0]).to.equal('manager');
-    expect(agentServiceStub.chat.firstCall.args[1]).to.equal(77);
-    expect(agentServiceStub.chat.firstCall.args[2]).to.equal('test message');
+    expect(agentServiceStub.chatStream.firstCall.args[0]).to.equal('manager');
+    expect(agentServiceStub.chatStream.firstCall.args[1]).to.equal(77);
+    expect(agentServiceStub.chatStream.firstCall.args[2]).to.equal('test message');
   });
 
   describe('env prompt overrides', () => {
     let handleManagerBotMessageWithEnv: any;
     let findManagedBotByOwnerEnvStub: sinon.SinonStub;
-    let agentEnvStub: { chat: sinon.SinonStub };
+    let agentEnvStub: { chat: sinon.SinonStub; chatStream: sinon.SinonStub };
     let mockTelegramEnv: MockTelegramClient;
 
     beforeEach(async () => {
       mockTelegramEnv = new MockTelegramClient();
       mockTelegramEnv.sendMessage.resolves({ message_id: 99, chat: { id: 100 }, date: 1 });
-      agentEnvStub = { chat: sinon.stub().resolves('reply') };
+      async function* defaultStream() { yield 'reply'; }
+      agentEnvStub = { chat: sinon.stub().resolves('reply'), chatStream: sinon.stub().returns(defaultStream()) };
       findManagedBotByOwnerEnvStub = sinon.stub();
     });
 
@@ -199,7 +205,7 @@ describe('handleManagerBotMessage', () => {
 
       await mod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
 
-      const systemPrompt: string = agentEnvStub.chat.firstCall.args[3];
+      const systemPrompt: string = agentEnvStub.chatStream.firstCall.args[3];
       expect(systemPrompt).to.include('Custom onboarding');
       expect(systemPrompt).to.include('https://t.me/newbot');
       expect(systemPrompt).not.to.include('{deepLink}');
@@ -226,7 +232,7 @@ describe('handleManagerBotMessage', () => {
 
       await mod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
 
-      const systemPrompt: string = agentEnvStub.chat.firstCall.args[3];
+      const systemPrompt: string = agentEnvStub.chatStream.firstCall.args[3];
       expect(systemPrompt).to.equal('Welcome Alice. Your bot is @alicebot.');
     });
 
@@ -249,7 +255,7 @@ describe('handleManagerBotMessage', () => {
 
       await mod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
 
-      const systemPrompt: string = agentEnvStub.chat.firstCall.args[3];
+      const systemPrompt: string = agentEnvStub.chatStream.firstCall.args[3];
       expect(systemPrompt).to.include('onboarding assistant for HelloMinds');
       expect(systemPrompt).to.include('https://t.me/newbot');
     });
