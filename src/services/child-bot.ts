@@ -3,7 +3,7 @@ import { getDecryptedBotToken } from './token-store.js';
 import { logger } from '../utils/logger.js';
 import type { Message, CallbackQuery } from '../types/telegram.js';
 import type { AgentService } from './agent.js';
-import { splitAtSentenceBoundary, trimToLastSentence } from '../utils/split-message.js';
+import { splitAtSentenceBoundary } from '../utils/split-message.js';
 import { toTelegramMarkdownV2 } from '../utils/telegram-markdownv2.js';
 import { env } from '../config/env.js';
 
@@ -245,13 +245,10 @@ export async function handleChildBotMessage(
       const now = Date.now();
       await tryTyping();
       if (throttleMs === 0 || now - lastSentAt >= throttleMs) {
-        const displayText = splitAtSentenceBoundary(trimToLastSentence(accumulated), 4096)[0] ?? '';
-        if (displayText) {
-          telegram.sendMessageDraft(token, chatId, draftId, toTelegramMarkdownV2(displayText), 'MarkdownV2').catch((err: unknown) => {
-            logger.warn({ err, botId, chatId }, 'sendMessageDraft (stream) failed (non-fatal)');
-          });
-          lastSentAt = now;
-        }
+        telegram.sendMessageDraft(token, chatId, draftId, toTelegramMarkdownV2(accumulated), 'MarkdownV2').catch((err: unknown) => {
+          logger.warn({ err, botId, chatId }, 'sendMessageDraft (stream) failed (non-fatal)');
+        });
+        lastSentAt = now;
       }
     }
 

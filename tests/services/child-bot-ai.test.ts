@@ -207,12 +207,12 @@ describe('child-bot AI integration', () => {
     await handleChildBotMessage(BOT_ID, makeMessage('hello'), agentServiceStub);
 
     const mdCalls = sendMessageDraftStub.args.filter((args: unknown[]) => args[4] === 'MarkdownV2');
-    // If any MarkdownV2 draft was sent, it must contain a complete sentence
-    for (const args of mdCalls) {
-      const content: string = args[3];
-      // content must end with a sentence-terminal punctuation
-      expect(content).to.match(/[.!?]$/);
-    }
+    // Draft sends accumulated content as-is (no sentence trimming)
+    expect(mdCalls.length).to.be.greaterThan(0);
+    // Final draft content should include the full accumulated text
+    const lastCall = mdCalls[mdCalls.length - 1];
+    const content: string = lastCall[3];
+    expect(content).to.include('Hello world');
   });
 
   it('sendChatAction is refreshed after TYPING_REFRESH_MS during a long stream', async () => {
