@@ -12,10 +12,14 @@ import esmock from 'esmock';
  */
 describe('child-bot AI integration', () => {
   let handleChildBotMessage: any;
+  let processChildBotMessage: any;
   let sendMessageStub: sinon.SinonStub;
   let sendMessageDraftStub: sinon.SinonStub;
   let sendChatActionStub: sinon.SinonStub;
   let getDecryptedBotTokenStub: sinon.SinonStub;
+  let acquireLockStub: sinon.SinonStub;
+  let releaseLockStub: sinon.SinonStub;
+  let queueAddStub: sinon.SinonStub;
   let agentServiceStub: {
     chat: sinon.SinonStub;
     chatStream: sinon.SinonStub;
@@ -37,11 +41,38 @@ describe('child-bot AI integration', () => {
     text,
   });
 
+  const makeJobData = (text = 'hello there') => ({
+    conversationId: `child:${BOT_ID}:${USER_ID}`,
+    botId: String(BOT_ID),
+    userId: USER_ID,
+    chatId: CHAT_ID,
+    messageId: 1,
+    text,
+  });
+
+  /** Fake TelegramClient for processChildBotMessage tests */
+  const makeFakeTelegram = () => ({
+    sendMessage: sendMessageStub,
+    sendMessageDraft: sendMessageDraftStub,
+    sendChatAction: sendChatActionStub,
+    answerCallbackQuery: sinon.stub().resolves(true),
+    setMyName: sinon.stub().resolves(true),
+    setMyDescription: sinon.stub().resolves(true),
+    setMyShortDescription: sinon.stub().resolves(true),
+    setMyCommands: sinon.stub().resolves(true),
+    setWebhook: sinon.stub().resolves(true),
+    deleteWebhook: sinon.stub().resolves(true),
+    getUpdates: sinon.stub().resolves([]),
+  });
+
   beforeEach(async () => {
     sendMessageStub = sinon.stub().resolves({});
     sendMessageDraftStub = sinon.stub().resolves(true);
     sendChatActionStub = sinon.stub().resolves(true);
     getDecryptedBotTokenStub = sinon.stub().resolves(TOKEN);
+    acquireLockStub = sinon.stub().resolves(true);
+    releaseLockStub = sinon.stub().resolves();
+    queueAddStub = sinon.stub().resolves({ id: 'job-1' });
 
     async function* defaultStream() { yield 'AI response'; }
     agentServiceStub = {
@@ -66,8 +97,11 @@ describe('child-bot AI integration', () => {
         },
       },
       '../../src/services/token-store.js': { getDecryptedBotToken: getDecryptedBotTokenStub },
+      '../../src/services/conversation-lock.js': { acquireLock: acquireLockStub, releaseLock: releaseLockStub },
+      '../../src/queues/child-queue.js': { childQueue: { add: queueAddStub } },
     });
     handleChildBotMessage = module.handleChildBotMessage;
+    processChildBotMessage = module.processChildBotMessage;
   });
 
   afterEach(async () => {
@@ -156,10 +190,11 @@ describe('child-bot AI integration', () => {
     expect(agentServiceStub.switchProvider.called).to.be.false;
   });
 
-  // ── Regular message → AI chat ─────────────────────────────────────────────
+  // ── Regular message → AI chat (enqueue path) ──────────────────────────────
 
   it('regular message calls agentService.chatStream with correct args', async () => {
-    await handleChildBotMessage(BOT_ID, makeMessage('hello there'), agentServiceStub);
+    // processChildBotMessage is the worker function that calls chatStream
+    await processChildBotMessage(makeJobData('hello there'), makeFakeTelegram(), agentServiceStub);
 
     expect(agentServiceStub.chatStream.calledOnce).to.be.true;
     expect(agentServiceStub.chatStream.firstCall.args[0]).to.equal(String(BOT_ID));
@@ -170,7 +205,7 @@ describe('child-bot AI integration', () => {
   it('sends thinking bubble after 250ms delay before stream starts', async () => {
     const clock = sinon.useFakeTimers();
     try {
-      const promise = handleChildBotMessage(BOT_ID, makeMessage('hello there'), agentServiceStub);
+      const promise = processChildBotMessage(makeJobData('hello there'), makeFakeTelegram(), agentServiceStub);
       await clock.tickAsync(300); // advance past 250ms
       await promise;
       expect(sendMessageDraftStub.calledWith(TOKEN, CHAT_ID, sinon.match.number, 'Thinking')).to.be.true;
@@ -180,7 +215,7 @@ describe('child-bot AI integration', () => {
   });
 
   it('sendChatAction typing is called when first token arrives (not before stream)', async () => {
-    await handleChildBotMessage(BOT_ID, makeMessage('hello there'), agentServiceStub);
+    await processChildBotMessage(makeJobData('hello there'), makeFakeTelegram(), agentServiceStub);
 
     expect(sendChatActionStub.calledWith(TOKEN, CHAT_ID, 'typing')).to.be.true;
   });
@@ -189,7 +224,7 @@ describe('child-bot AI integration', () => {
     async function* stream() { yield 'Hello world. '; yield 'chunk2'; yield 'chunk3'; }
     agentServiceStub.chatStream.returns(stream());
 
-    await handleChildBotMessage(BOT_ID, makeMessage('hello'), agentServiceStub);
+    await processChildBotMessage(makeJobData('hello'), makeFakeTelegram(), agentServiceStub);
 
     // At least one draft call with MarkdownV2 content (fire-and-forget during stream)
     const mdCalls = sendMessageDraftStub.args.filter((args: unknown[]) => args[4] === 'MarkdownV2');
@@ -204,7 +239,7 @@ describe('child-bot AI integration', () => {
     }
     agentServiceStub.chatStream.returns(stream());
 
-    await handleChildBotMessage(BOT_ID, makeMessage('hello'), agentServiceStub);
+    await processChildBotMessage(makeJobData('hello'), makeFakeTelegram(), agentServiceStub);
 
     const mdCalls = sendMessageDraftStub.args.filter((args: unknown[]) => args[4] === 'MarkdownV2');
     // Draft sends accumulated content as-is (no sentence trimming)
@@ -227,7 +262,7 @@ describe('child-bot AI integration', () => {
     }
     agentServiceStub.chatStream.returns(longStream());
 
-    await handleChildBotMessage(BOT_ID, makeMessage('long question'), agentServiceStub);
+    await processChildBotMessage(makeJobData('long question'), makeFakeTelegram(), agentServiceStub);
 
     dateNowStub.restore();
 
@@ -239,7 +274,7 @@ describe('child-bot AI integration', () => {
   it('regular message sends AI reply to user', async () => {
     async function* stream() { yield 'This is the AI answer'; }
     agentServiceStub.chatStream.returns(stream());
-    await handleChildBotMessage(BOT_ID, makeMessage('what is 2+2?'), agentServiceStub);
+    await processChildBotMessage(makeJobData('what is 2+2?'), makeFakeTelegram(), agentServiceStub);
 
     expect(sendMessageStub.calledOnce).to.be.true;
     expect(sendMessageStub.firstCall.args[1]).to.equal(CHAT_ID);
@@ -249,7 +284,7 @@ describe('child-bot AI integration', () => {
   it('error in agentService.chat sends fallback error message', async () => {
     async function* throwingStream(): AsyncGenerator<string> { throw new Error('LLM offline'); yield ''; }
     agentServiceStub.chatStream.returns(throwingStream());
-    await handleChildBotMessage(BOT_ID, makeMessage('help me'), agentServiceStub);
+    await processChildBotMessage(makeJobData('help me'), makeFakeTelegram(), agentServiceStub);
 
     expect(sendMessageStub.calledOnce).to.be.true;
     const replyText: string = sendMessageStub.firstCall.args[2];
@@ -311,7 +346,7 @@ describe('child-bot AI integration', () => {
     async function* stream() { yield 'safe reply'; }
     agentServiceStub.chatStream.returns(stream());
 
-    await handleChildBotMessage(BOT_ID, makeMessage('hello'), agentServiceStub);
+    await processChildBotMessage(makeJobData('hello'), makeFakeTelegram(), agentServiceStub);
 
     // final sendMessage must still be called with the AI reply
     expect(sendMessageStub.called).to.be.true;

@@ -7,42 +7,43 @@ import type { AgentService } from './agent.js';
 import type { Message } from '../types/telegram.js';
 import { splitAtSentenceBoundary } from '../utils/split-message.js';
 import { toTelegramMarkdownV2 } from '../utils/telegram-markdownv2.js';
-import { checkManagerThrottle } from './conversation-throttle.js';
+import { checkThrottle } from './conversation-throttle.js';
+import { acquireLock, releaseLock } from './conversation-lock.js';
+import { managerQueue as defaultManagerQueue } from '../queues/manager-queue.js';
+import type { Queue } from 'bullmq';
+import type { ManagerMessageJobData } from '../queues/types.js';
 
 const TELEGRAM_USERNAME_RE = /^[a-zA-Z0-9_]{5,32}$/;
 
-export async function handleManagerBotMessage(
+/**
+ * Webhook-facing function. Checks throttle + lock gate, enqueues the job,
+ * and returns immediately (~2ms). All LLM work happens in the worker.
+ */
+export async function enqueueManagerMessage(
   message: Message,
   telegram: TelegramClient,
-  agentService: AgentService,
   managerBotToken: string,
-  managerBotId: string,
-  _baseUrl: string,
   botUsername: string,
+  queue: Queue<ManagerMessageJobData> = defaultManagerQueue,
 ): Promise<void> {
   const chatId = message.chat.id;
   const from = message.from;
   const text = message.text ?? '';
 
   if (!from) {
-    logger.info({ chatId }, 'handleManagerBotMessage: no from field, ignoring');
+    logger.info({ chatId }, 'enqueueManagerMessage: no from field, ignoring');
     return;
   }
 
-  logger.info(
-    { chatId, userId: from.id, textLength: text.length },
-    'handleManagerBotMessage: received',
-  );
-  logger.trace({ chatId, userId: from.id, text }, 'handleManagerBotMessage: message text');
+  logger.info({ chatId, userId: from.id, textLength: text.length }, 'enqueueManagerMessage: received');
+  logger.trace({ chatId, userId: from.id, text }, 'enqueueManagerMessage: message text');
 
-  // Per-conversation throttle — fail-open: Redis errors allow the message through
+  const conversationId = `manager:${from.id}`;
 
-  
+  // Step 1: throttle check
   if (env.MANAGER_THROTTLE_MS > 0) {
-    logger.warn({ userId: from.id, throttleMs: env.MANAGER_THROTTLE_MS }, 'handleManagerBotMessage: checking throttle');
     try {
-      const throttle = await checkManagerThrottle(from.id, env.MANAGER_THROTTLE_MS);
-      logger.debug({ userId: from.id, throttle }, 'handleManagerBotMessage: throttle check');
+      const throttle = await checkThrottle(conversationId, env.MANAGER_THROTTLE_MS);
       if (!throttle.allowed) {
         const seconds = Math.ceil(throttle.retryAfterMs / 1000);
         await telegram.sendMessage(
@@ -53,28 +54,82 @@ export async function handleManagerBotMessage(
         return;
       }
     } catch (err) {
-      logger.warn({ err, userId: from.id }, 'handleManagerBotMessage: throttle check failed, proceeding');
+      logger.warn({ err, userId: from.id }, 'enqueueManagerMessage: throttle check failed, proceeding');
     }
   }
 
-  // Sanitize first_name to prevent prompt injection via user-controlled fields
-  const safeName = (from.first_name ?? 'there')
+  // Step 2: acquire processing lock
+  try {
+    const locked = await acquireLock(conversationId, env.LOCK_TTL_SECS);
+    if (!locked) {
+      await telegram.sendMessage(
+        managerBotToken,
+        chatId,
+        "I'm still working on your previous message, please wait a moment.",
+      );
+      return;
+    }
+  } catch (err) {
+    logger.warn({ err, userId: from.id }, 'enqueueManagerMessage: lock check failed, proceeding');
+  }
+
+  // Step 3: enqueue
+  try {
+    await queue.add(
+      'manager-message',
+      {
+        conversationId,
+        userId: from.id,
+        chatId,
+        messageId: message.message_id,
+        text,
+        firstName: from.first_name ?? '',
+        username: from.username,
+      },
+      { jobId: `msg:${message.message_id}` },
+    );
+    logger.info({ chatId, userId: from.id, conversationId }, 'enqueueManagerMessage: enqueued');
+  } catch (err) {
+    logger.error({ err, chatId, userId: from.id }, 'enqueueManagerMessage: failed to enqueue');
+    // Release lock since job was never queued
+    try { await releaseLock(conversationId); } catch { /* ignore */ }
+    try {
+      await telegram.sendMessage(managerBotToken, chatId, 'Sorry, I encountered an issue. Please try again in a moment.');
+    } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Worker-facing function. Performs the full LLM + streaming + Telegram reply.
+ * Called by the BullMQ worker process.
+ * Caller is responsible for releasing the lock in a finally block.
+ */
+export async function processManagerMessage(
+  jobData: ManagerMessageJobData,
+  telegram: TelegramClient,
+  agentService: AgentService,
+  managerBotToken: string,
+  managerBotId: string,
+  _baseUrl: string,
+  botUsername: string,
+): Promise<void> {
+  const { chatId, userId, text, firstName, username, conversationId } = jobData;
+
+  logger.info({ chatId, userId, conversationId }, 'processManagerMessage: start');
+
+  const safeName = (firstName ?? 'there')
     .replace(/[^a-zA-Z0-9 \-']/g, '')
     .slice(0, 50)
     .trim() || 'there';
 
-  // Validate username against Telegram's documented format before embedding in URLs
-  const safeUsername =
-    from.username && TELEGRAM_USERNAME_RE.test(from.username) ? from.username : null;
+  const safeUsername = username && TELEGRAM_USERNAME_RE.test(username) ? username : null;
 
   try {
-    // Determine conversation mode based on whether user has an ACTIVE bot
-    const managedBot = await findManagedBotByOwner(from.id);
+    const managedBot = await findManagedBotByOwner(userId);
 
     let systemPrompt: string;
 
     if (managedBot?.status === 'ACTIVE') {
-      // Settings/billing mode — bot is live, manager handles platform support
       const template =
         (env.MANAGER_SETTINGS_PROMPT && env.MANAGER_SETTINGS_PROMPT.trim()) ||
         `You are HelloMinds' platform assistant for {name}.` +
@@ -91,10 +146,9 @@ export async function handleManagerBotMessage(
         botUsername: managedBot.bot_username ?? '',
       });
     } else {
-      // Onboarding mode — guide user to create their personal bot
       const suggestedUsername = safeUsername
         ? `${safeUsername}_ai_bot`
-        : `user${from.id}_bot`;
+        : `user${userId}_bot`;
       const deepLink =
         `https://t.me/newbot/${botUsername}/${suggestedUsername}` +
         `?name=${encodeURIComponent(`${safeName}'s Bot`)}`;
@@ -111,13 +165,11 @@ export async function handleManagerBotMessage(
 
       systemPrompt = interpolate(template, { name: safeName, deepLink });
 
-      // Append status hint if bot exists but not yet active
       if (managedBot?.status === 'PENDING' || managedBot?.status === 'PROVISIONING') {
         systemPrompt += ` Note: the user's bot is currently being set up.`;
       }
     }
 
-    // tryTyping: sendChatAction with internal 4s throttle — failure is non-fatal
     const TYPING_REFRESH_MS = 4000;
     let lastTypingAt = 0;
     const tryTyping = async (): Promise<void> => {
@@ -131,7 +183,6 @@ export async function handleManagerBotMessage(
       }
     };
 
-    // Thinking bubble: plain text, no parse_mode; delayed 250 ms so fast replies don't flash
     setTimeout(() => {
       telegram.sendMessageDraft(managerBotToken, chatId, 1, 'Thinking').catch((err: unknown) => {
         logger.warn({ err, chatId }, 'sendMessageDraft (thinking) failed (non-fatal)');
@@ -142,7 +193,7 @@ export async function handleManagerBotMessage(
     let lastSentAt = 0;
     const throttleMs = env.STREAM_THROTTLE_MS;
     const draftId = Math.floor(Date.now() + Math.random() * 1000);
-    for await (const chunk of agentService.chatStream(managerBotId, from.id, text, systemPrompt)) {
+    for await (const chunk of agentService.chatStream(managerBotId, userId, text, systemPrompt)) {
       accumulated += chunk;
       const now = Date.now();
       await tryTyping();
@@ -154,15 +205,14 @@ export async function handleManagerBotMessage(
       }
     }
 
-    // Final reply: splitAtSentenceBoundary guards against 4096-char Telegram limit
     const parts = splitAtSentenceBoundary(accumulated);
     for (const part of parts) {
       await telegram.sendMessage(managerBotToken, chatId, toTelegramMarkdownV2(part), { parse_mode: 'MarkdownV2' });
     }
 
-    logger.debug({ chatId, userId: from.id }, 'handleManagerBotMessage: reply sent');
+    logger.debug({ chatId, userId }, 'processManagerMessage: reply sent');
   } catch (err) {
-    logger.error({ err, chatId, userId: from?.id }, 'handleManagerBotMessage: error');
+    logger.error({ err, chatId, userId }, 'processManagerMessage: error');
     try {
       await telegram.sendMessage(
         managerBotToken,
@@ -170,7 +220,63 @@ export async function handleManagerBotMessage(
         'Sorry, I encountered an issue. Please try again in a moment.',
       );
     } catch (sendErr) {
-      logger.error({ err: sendErr, chatId }, 'handleManagerBotMessage: failed to send error fallback');
+      logger.error({ err: sendErr, chatId }, 'processManagerMessage: failed to send error fallback');
     }
   }
+}
+
+/**
+ * @deprecated Use enqueueManagerMessage instead.
+ * Kept as alias so existing callers compile without changes during migration.
+ */
+export async function handleManagerBotMessage(
+  message: Message,
+  telegram: TelegramClient,
+  agentService: AgentService,
+  managerBotToken: string,
+  managerBotId: string,
+  baseUrl: string,
+  botUsername: string,
+): Promise<void> {
+  // For backward compatibility in tests: call processManagerMessage directly
+  // (bypasses queue — used by existing tests that pass agentService directly).
+  const from = message.from;
+  if (!from) {
+    logger.info({ chatId: message.chat.id }, 'handleManagerBotMessage: no from field, ignoring');
+    return;
+  }
+
+  const conversationId = `manager:${from.id}`;
+
+  // Per-conversation throttle — fail-open: Redis errors allow the message through
+  if (env.MANAGER_THROTTLE_MS > 0) {
+    logger.warn({ userId: from.id, throttleMs: env.MANAGER_THROTTLE_MS }, 'handleManagerBotMessage: checking throttle');
+    try {
+      const throttle = await checkThrottle(conversationId, env.MANAGER_THROTTLE_MS);
+      logger.debug({ userId: from.id, throttle }, 'handleManagerBotMessage: throttle check');
+      if (!throttle.allowed) {
+        const seconds = Math.ceil(throttle.retryAfterMs / 1000);
+        await telegram.sendMessage(
+          managerBotToken,
+          message.chat.id,
+          `Please wait ${seconds} second${seconds !== 1 ? 's' : ''} before sending another message.`,
+        );
+        return;
+      }
+    } catch (err) {
+      logger.warn({ err, userId: from.id }, 'handleManagerBotMessage: throttle check failed, proceeding');
+    }
+  }
+
+  const jobData: ManagerMessageJobData = {
+    conversationId,
+    userId: from.id,
+    chatId: message.chat.id,
+    messageId: message.message_id,
+    text: message.text ?? '',
+    firstName: from.first_name ?? '',
+    username: from.username,
+  };
+
+  await processManagerMessage(jobData, telegram, agentService, managerBotToken, managerBotId, baseUrl, botUsername);
 }

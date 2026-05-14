@@ -6,6 +6,11 @@ import type { AgentService } from './agent.js';
 import { splitAtSentenceBoundary } from '../utils/split-message.js';
 import { toTelegramMarkdownV2 } from '../utils/telegram-markdownv2.js';
 import { env } from '../config/env.js';
+import { acquireLock, releaseLock } from './conversation-lock.js';
+import { childQueue as defaultChildQueue } from '../queues/child-queue.js';
+import type { Queue } from 'bullmq';
+import type { ChildMessageJobData } from '../queues/types.js';
+import type { TelegramClient } from './telegram-api.js';
 
 /**
  * Factory function — tests can esmock this to provide a mock Telegram client.
@@ -78,17 +83,26 @@ export async function provisionChildBot(
  * Use this when registering a bot with BotRegistry to avoid repeating
  * the inline dispatch arrow function at every call site.
  */
-export function createChildBotHandler(botId: number, agentService: AgentService) {
+export function createChildBotHandler(
+  botId: number,
+  agentService: AgentService,
+  queue: Queue<ChildMessageJobData> = defaultChildQueue,
+) {
   return async (update: { message?: Message; callback_query?: CallbackQuery }): Promise<void> => {
-    if (update.message) await handleChildBotMessage(botId, update.message, agentService);
+    if (update.message) await handleChildBotMessage(botId, update.message, agentService, queue);
     else if (update.callback_query) await handleChildBotCallback(botId, update.callback_query);
   };
 }
 
+/**
+ * Webhook-facing function for child bots.
+ * Handles commands synchronously; routes AI chat to the queue.
+ */
 export async function handleChildBotMessage(
   botId: number,
   message: Message,
   agentService: AgentService,
+  queue: Queue<ChildMessageJobData> = defaultChildQueue,
 ): Promise<void> {
   const chatId = message.chat.id;
   const text = message.text ?? '';
@@ -210,43 +224,127 @@ export async function handleChildBotMessage(
       return;
     }
 
-    // ── Normal chat → AI streaming response ─────────────────────────────
-    logger.debug({ botId, chatId }, 'handleChildBotMessage: routing to AI (streaming)');
+    // ── Normal chat → enqueue for AI streaming response ──────────────────
+    logger.debug({ botId, chatId }, 'handleChildBotMessage: routing to AI via queue');
+    await enqueueChildMessage(botId, message, token, queue);
+  } catch (err) {
+    logger.error({ err, botId, chatId, from: message.from?.id }, 'handleChildBotMessage: failed');
+    await telegram.sendMessage(
+      token,
+      chatId,
+      'Sorry, I encountered an issue. Please try again in a moment.',
+    );
+  }
+}
 
-    // draft_id: unique integer per message
-    const draftId = Math.floor(Date.now() + Math.random() * 1000);
+/**
+ * Webhook-facing enqueue function for child bot AI messages.
+ * Acquires lock, enqueues job. Commands must already be handled before calling this.
+ */
+export async function enqueueChildMessage(
+  botId: number,
+  message: Message,
+  token: string,
+  queue: Queue<ChildMessageJobData> = defaultChildQueue,
+): Promise<void> {
+  const chatId = message.chat.id;
+  const userId = message.from!.id;
+  const text = message.text ?? '';
+  const botIdStr = String(botId);
+  const conversationId = `child:${botIdStr}:${userId}`;
 
-    // tryTyping: sendChatAction with internal 4s throttle — failure is non-fatal
-    const TYPING_REFRESH_MS = 4000;
-    let lastTypingAt = 0;
-    const tryTyping = async (): Promise<void> => {
-      const now = Date.now();
-      if (now - lastTypingAt < TYPING_REFRESH_MS) return;
-      lastTypingAt = now;
-      try {
-        await telegram.sendChatAction(token, chatId, 'typing');
-      } catch (err) {
-        logger.warn({ err, botId, chatId }, 'sendChatAction failed (non-fatal)');
-      }
-    };
+  // Acquire processing lock
+  try {
+    const locked = await acquireLock(conversationId, env.LOCK_TTL_SECS);
+    if (!locked) {
+      await telegram.sendMessage(
+        token,
+        chatId,
+        "I'm still working on your previous message, please wait a moment.",
+      );
+      return;
+    }
+  } catch (err) {
+    logger.warn({ err, botId, userId }, 'enqueueChildMessage: lock check failed, proceeding');
+  }
 
-    // Thinking bubble: plain text, no parse_mode; delayed 250 ms so fast replies don't flash
-    setTimeout(() => {
-      telegram.sendMessageDraft(token, chatId, draftId, 'Thinking').catch((err: unknown) => {
-        logger.warn({ err, botId, chatId }, 'sendMessageDraft (thinking) failed (non-fatal)');
-      });
-    }, 250);
+  // Enqueue
+  try {
+    await queue.add(
+      'child-message',
+      {
+        conversationId,
+        botId: botIdStr,
+        userId,
+        chatId,
+        messageId: message.message_id,
+        text,
+      },
+      { jobId: `msg:${botIdStr}:${message.message_id}` },
+    );
+    logger.info({ chatId, userId, conversationId }, 'enqueueChildMessage: enqueued');
+  } catch (err) {
+    logger.error({ err, chatId, userId }, 'enqueueChildMessage: failed to enqueue');
+    // Release lock since job was never queued
+    try { await releaseLock(conversationId); } catch { /* ignore */ }
+    try {
+      await telegram.sendMessage(token, chatId, 'Sorry, I encountered an issue. Please try again in a moment.');
+    } catch { /* ignore */ }
+  }
+}
 
-    let accumulated = '';
-    let lastSentAt = 0;
-    const throttleMs = env.STREAM_THROTTLE_MS;
+/**
+ * Worker-facing function. Performs the AI streaming response for child bots.
+ * Called by the BullMQ worker process.
+ * Caller is responsible for releasing the lock in a finally block.
+ */
+export async function processChildBotMessage(
+  jobData: ChildMessageJobData,
+  telegramClient: TelegramClient,
+  agentService: AgentService,
+): Promise<void> {
+  const { botId, userId, chatId, text, conversationId } = jobData;
+  const botIdStr = String(botId);
 
+  logger.info({ botId, chatId, userId, conversationId }, 'processChildBotMessage: start');
+
+  const token = await getDecryptedBotToken(Number(botId));
+
+  // draft_id: unique integer per message
+  const draftId = Math.floor(Date.now() + Math.random() * 1000);
+
+  // tryTyping: sendChatAction with internal 4s throttle — failure is non-fatal
+  const TYPING_REFRESH_MS = 4000;
+  let lastTypingAt = 0;
+  const tryTyping = async (): Promise<void> => {
+    const now = Date.now();
+    if (now - lastTypingAt < TYPING_REFRESH_MS) return;
+    lastTypingAt = now;
+    try {
+      await telegramClient.sendChatAction(token, chatId, 'typing');
+    } catch (err) {
+      logger.warn({ err, botId, chatId }, 'sendChatAction failed (non-fatal)');
+    }
+  };
+
+  // Thinking bubble: plain text, no parse_mode; delayed 250 ms so fast replies don't flash
+  setTimeout(() => {
+    telegramClient.sendMessageDraft(token, chatId, draftId, 'Thinking').catch((err: unknown) => {
+      logger.warn({ err, botId, chatId }, 'sendMessageDraft (thinking) failed (non-fatal)');
+    });
+  }, 250);
+
+  let accumulated = '';
+  let lastSentAt = 0;
+  const throttleMs = env.STREAM_THROTTLE_MS;
+
+  try {
     for await (const chunk of agentService.chatStream(botIdStr, userId, text)) {
       accumulated += chunk;
       const now = Date.now();
       await tryTyping();
       if (throttleMs === 0 || now - lastSentAt >= throttleMs) {
-        telegram.sendMessageDraft(token, chatId, draftId, toTelegramMarkdownV2(accumulated), 'MarkdownV2').catch((err: unknown) => {
+        telegramClient.sendMessageDraft(token, chatId, draftId, toTelegramMarkdownV2(accumulated), 'MarkdownV2').catch((err: unknown) => {
           logger.warn({ err, botId, chatId }, 'sendMessageDraft (stream) failed (non-fatal)');
         });
         lastSentAt = now;
@@ -256,11 +354,13 @@ export async function handleChildBotMessage(
     // Final reply: splitAtSentenceBoundary guards against 4096-char Telegram limit
     const parts = splitAtSentenceBoundary(accumulated);
     for (const part of parts) {
-      await telegram.sendMessage(token, chatId, toTelegramMarkdownV2(part), { parse_mode: 'MarkdownV2' });
+      await telegramClient.sendMessage(token, chatId, toTelegramMarkdownV2(part), { parse_mode: 'MarkdownV2' });
     }
+
+    logger.debug({ botId, chatId, userId }, 'processChildBotMessage: reply sent');
   } catch (err) {
-    logger.error({ err, botId, chatId, from: message.from?.id }, 'handleChildBotMessage: failed');
-    await telegram.sendMessage(
+    logger.error({ err, botId, chatId, userId }, 'processChildBotMessage: failed');
+    await telegramClient.sendMessage(
       token,
       chatId,
       'Sorry, I encountered an issue. Please try again in a moment.',

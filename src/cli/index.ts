@@ -43,6 +43,15 @@ program
     await app.start();
   });
 
+program
+  .command('worker')
+  .description('Start the BullMQ worker process (no HTTP server)')
+  .action(async () => {
+    const { WorkerBootstrap } = await import('../bootstrap/WorkerBootstrap.js');
+    const worker = new WorkerBootstrap();
+    await worker.start();
+  });
+
 program.showHelpAfterError();
 program.showSuggestionAfterError();
 

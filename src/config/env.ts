@@ -51,6 +51,9 @@ const envSchema = z.object({
   STREAM_THROTTLE_MS: z.coerce.number().int().min(0).default(0),
   REDIS_URL: z.string().default('redis://localhost:6379'),
   MANAGER_THROTTLE_MS: z.coerce.number().int().min(0).default(5000),
+  WORKER_CONCURRENCY: z.coerce.number().int().min(1).default(4),
+  JOB_RETENTION_HOURS: z.coerce.number().int().min(0).default(24),
+  LOCK_TTL_SECS: z.coerce.number().int().min(10).default(60),
 }).superRefine((data, ctx) => {
   // DEFAULT_LLM_PROVIDER key requirements
   if (data.DEFAULT_LLM_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {

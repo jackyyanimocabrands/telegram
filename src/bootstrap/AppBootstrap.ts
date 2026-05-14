@@ -21,7 +21,9 @@ import * as managedBotQueries from '../db/queries/managed-bots.js';
 import { AgentService } from '../services/agent.js';
 import { ConversationService } from '../services/conversation.js';
 import { LlmProviderFactory } from '../services/llm/factory.js';
-import { handleManagerBotMessage } from '../services/manager-bot.js';
+import { handleManagerBotMessage, enqueueManagerMessage } from '../services/manager-bot.js';
+import { managerQueue } from '../queues/manager-queue.js';
+import { childQueue } from '../queues/child-queue.js';
 
 export class AppBootstrap {
   private app: express.Application;
@@ -109,13 +111,10 @@ export class AppBootstrap {
             );
             await managedBotService.handleManagedBotUpdated(update.update_id, update.managed_bot);
           } else if (update.message) {
-            await handleManagerBotMessage(
+            await enqueueManagerMessage(
               update.message,
               telegram,
-              agentService,
               env.BOT_TOKEN,
-              'manager',
-              env.BASE_URL,
               env.BOT_USERNAME,
             );
           } else {
@@ -190,6 +189,9 @@ export class AppBootstrap {
     if (this.registry) {
       await this.registry.stop();
     }
+    await Promise.all([managerQueue.close(), childQueue.close()]).catch((err) => {
+      logger.error({ err }, 'Error closing BullMQ queues');
+    });
     await new Promise<void>((resolve) => {
       if (!this.server) { resolve(); return; }
       this.server.close(async () => {

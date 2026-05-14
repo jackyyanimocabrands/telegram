@@ -15,7 +15,10 @@ describe('handleManagerBotMessage', () => {
     generateWarmPrompt: sinon.SinonStub;
   };
   let findManagedBotByOwnerStub: sinon.SinonStub;
-  let checkManagerThrottleStub: sinon.SinonStub;
+  let checkThrottleStub: sinon.SinonStub;
+  let acquireLockStub: sinon.SinonStub;
+  let releaseLockStub: sinon.SinonStub;
+  let queueAddStub: sinon.SinonStub;
 
   const MANAGER_TOKEN = 'manager-token-abc';
   const MANAGER_BOT_ID = 'manager';
@@ -56,14 +59,24 @@ describe('handleManagerBotMessage', () => {
     };
 
     findManagedBotByOwnerStub = sinon.stub().resolves(null);
-    checkManagerThrottleStub = sinon.stub().resolves({ allowed: true, retryAfterMs: 0 });
+    checkThrottleStub = sinon.stub().resolves({ allowed: true, retryAfterMs: 0 });
+    acquireLockStub = sinon.stub().resolves(true);
+    releaseLockStub = sinon.stub().resolves();
+    queueAddStub = sinon.stub().resolves({ id: 'test-job-1' });
 
     const module = await esmock('../../src/services/manager-bot.ts', {
       '../../src/db/queries/managed-bots.js': {
         findManagedBotByOwner: findManagedBotByOwnerStub,
       },
       '../../src/services/conversation-throttle.js': {
-        checkManagerThrottle: checkManagerThrottleStub,
+        checkThrottle: checkThrottleStub,
+      },
+      '../../src/services/conversation-lock.js': {
+        acquireLock: acquireLockStub,
+        releaseLock: releaseLockStub,
+      },
+      '../../src/queues/manager-queue.js': {
+        managerQueue: { add: queueAddStub },
       },
     });
     handleManagerBotMessage = module.handleManagerBotMessage;
@@ -263,7 +276,9 @@ describe('handleManagerBotMessage', () => {
       const throttledStub = sinon.stub().resolves({ allowed: false, retryAfterMs: 3500 });
       const mod = await esmock('../../src/services/manager-bot.ts', {
         '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerStub },
-        '../../src/services/conversation-throttle.js': { checkManagerThrottle: throttledStub },
+        '../../src/services/conversation-throttle.js': { checkThrottle: throttledStub },
+        '../../src/services/conversation-lock.js': { acquireLock: acquireLockStub, releaseLock: releaseLockStub },
+        '../../src/queues/manager-queue.js': { managerQueue: { add: queueAddStub } },
       });
       const message = makeMessage({ chatId: 100, fromId: 42 });
 
@@ -283,15 +298,18 @@ describe('handleManagerBotMessage', () => {
       await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
 
       expect(agentServiceStub.chatStream.calledOnce).to.be.true;
-      expect(checkManagerThrottleStub.calledOnce).to.be.true;
-      expect(checkManagerThrottleStub.firstCall.args[0]).to.equal(77);
+      expect(checkThrottleStub.calledOnce).to.be.true;
+      // conversationId is 'manager:77'
+      expect(checkThrottleStub.firstCall.args[0]).to.equal('manager:77');
     });
 
     it('proceeds normally when throttle check throws (fail-open)', async () => {
       const errorStub = sinon.stub().rejects(new Error('Redis down'));
       const mod = await esmock('../../src/services/manager-bot.ts', {
         '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerStub },
-        '../../src/services/conversation-throttle.js': { checkManagerThrottle: errorStub },
+        '../../src/services/conversation-throttle.js': { checkThrottle: errorStub },
+        '../../src/services/conversation-lock.js': { acquireLock: acquireLockStub, releaseLock: releaseLockStub },
+        '../../src/queues/manager-queue.js': { managerQueue: { add: queueAddStub } },
       });
       const message = makeMessage({ chatId: 100, fromId: 42 });
 
@@ -330,6 +348,9 @@ describe('handleManagerBotMessage', () => {
           env: { MANAGER_ONBOARDING_PROMPT: 'Custom onboarding. Link: {deepLink}' },
         },
         '../../src/utils/interpolate.js': { interpolate: (t: string, v: Record<string, string>) => t.replace(/\{([^}]+)\}/g, (m: string, k: string) => v[k] ?? m) },
+        '../../src/services/conversation-throttle.js': { checkThrottle: sinon.stub().resolves({ allowed: true, retryAfterMs: 0 }) },
+        '../../src/services/conversation-lock.js': { acquireLock: sinon.stub().resolves(true), releaseLock: sinon.stub().resolves() },
+        '../../src/queues/manager-queue.js': { managerQueue: { add: sinon.stub().resolves({ id: 'j1' }) } },
       });
 
       const msg = {
@@ -357,6 +378,9 @@ describe('handleManagerBotMessage', () => {
           env: { MANAGER_SETTINGS_PROMPT: 'Welcome {name}. Your bot is @{botUsername}.' },
         },
         '../../src/utils/interpolate.js': { interpolate: (t: string, v: Record<string, string>) => t.replace(/\{([^}]+)\}/g, (m: string, k: string) => v[k] ?? m) },
+        '../../src/services/conversation-throttle.js': { checkThrottle: sinon.stub().resolves({ allowed: true, retryAfterMs: 0 }) },
+        '../../src/services/conversation-lock.js': { acquireLock: sinon.stub().resolves(true), releaseLock: sinon.stub().resolves() },
+        '../../src/queues/manager-queue.js': { managerQueue: { add: sinon.stub().resolves({ id: 'j1' }) } },
       });
 
       const msg = {
@@ -380,6 +404,9 @@ describe('handleManagerBotMessage', () => {
         '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerEnvStub },
         '../../src/config/env.js': { env: {} },
         '../../src/utils/interpolate.js': { interpolate: (t: string, v: Record<string, string>) => t.replace(/\{([^}]+)\}/g, (m: string, k: string) => v[k] ?? m) },
+        '../../src/services/conversation-throttle.js': { checkThrottle: sinon.stub().resolves({ allowed: true, retryAfterMs: 0 }) },
+        '../../src/services/conversation-lock.js': { acquireLock: sinon.stub().resolves(true), releaseLock: sinon.stub().resolves() },
+        '../../src/queues/manager-queue.js': { managerQueue: { add: sinon.stub().resolves({ id: 'j1' }) } },
       });
 
       const msg = {
@@ -396,5 +423,170 @@ describe('handleManagerBotMessage', () => {
       expect(systemPrompt).to.include('onboarding assistant for HelloMinds');
       expect(systemPrompt).to.include('https://t.me/newbot');
     });
+  });
+});
+
+describe('enqueueManagerMessage', () => {
+  let enqueueManagerMessage: any;
+  let mockTelegram: MockTelegramClient;
+  let acquireLockStub: sinon.SinonStub;
+  let releaseLockStub: sinon.SinonStub;
+  let checkThrottleStub: sinon.SinonStub;
+  let queueAddStub: sinon.SinonStub;
+
+  const MANAGER_TOKEN = 'manager-token-abc';
+  const BOT_USERNAME = 'hellominds_bot';
+
+  const makeMessage = (overrides: Partial<{ chatId: number; fromId: number; messageId: number }> = {}) => ({
+    message_id: overrides.messageId ?? 1,
+    chat: { id: overrides.chatId ?? 100, type: 'private' as const },
+    date: 1,
+    from: { id: overrides.fromId ?? 42, is_bot: false, first_name: 'Alice', username: 'alice' },
+    text: 'hello',
+  });
+
+  beforeEach(async () => {
+    mockTelegram = new MockTelegramClient();
+    mockTelegram.sendMessage.resolves({ message_id: 99, chat: { id: 100 }, date: 1 });
+
+    acquireLockStub = sinon.stub().resolves(true);
+    releaseLockStub = sinon.stub().resolves();
+    checkThrottleStub = sinon.stub().resolves({ allowed: true, retryAfterMs: 0 });
+    queueAddStub = sinon.stub().resolves({ id: 'test-job-1' });
+
+    const module = await esmock('../../src/services/manager-bot.ts', {
+      '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: sinon.stub().resolves(null) },
+      '../../src/services/conversation-throttle.js': { checkThrottle: checkThrottleStub },
+      '../../src/services/conversation-lock.js': { acquireLock: acquireLockStub, releaseLock: releaseLockStub },
+      '../../src/queues/manager-queue.js': { managerQueue: { add: queueAddStub } },
+    });
+    enqueueManagerMessage = module.enqueueManagerMessage;
+  });
+
+  afterEach(async () => {
+    sinon.restore();
+    await esmock.purge();
+  });
+
+  it('enqueues job when lock is acquired', async () => {
+    const message = makeMessage({ messageId: 55 });
+    await enqueueManagerMessage(message, mockTelegram, MANAGER_TOKEN, BOT_USERNAME);
+    expect(queueAddStub.calledOnce).to.be.true;
+    expect(queueAddStub.firstCall.args[0]).to.equal('manager-message');
+    expect(queueAddStub.firstCall.args[1].conversationId).to.equal('manager:42');
+  });
+
+  it('sends "still working" reply and does NOT call queue.add when lock is not acquired', async () => {
+    acquireLockStub.resolves(false);
+    const message = makeMessage();
+    await enqueueManagerMessage(message, mockTelegram, MANAGER_TOKEN, BOT_USERNAME);
+    expect(queueAddStub.called).to.be.false;
+    expect(mockTelegram.sendMessage.calledOnce).to.be.true;
+    const text: string = mockTelegram.sendMessage.firstCall.args[2];
+    expect(text).to.include("still working");
+  });
+
+  it('releases lock and sends error message when queue.add fails', async () => {
+    queueAddStub.rejects(new Error('Redis enqueue error'));
+    const message = makeMessage();
+    await enqueueManagerMessage(message, mockTelegram, MANAGER_TOKEN, BOT_USERNAME);
+    expect(releaseLockStub.calledOnce).to.be.true;
+    expect(mockTelegram.sendMessage.calledOnce).to.be.true;
+    const text: string = mockTelegram.sendMessage.firstCall.args[2];
+    expect(text).to.include('Sorry');
+  });
+
+  it('ignores message when from is missing', async () => {
+    const message = { message_id: 1, chat: { id: 100, type: 'private' as const }, date: 1, text: 'hi' };
+    await enqueueManagerMessage(message as any, mockTelegram, MANAGER_TOKEN, BOT_USERNAME);
+    expect(queueAddStub.called).to.be.false;
+    expect(mockTelegram.sendMessage.called).to.be.false;
+  });
+});
+
+describe('processManagerMessage', () => {
+  let processManagerMessage: any;
+  let mockTelegram: MockTelegramClient;
+  let agentServiceStub: {
+    chatStream: sinon.SinonStub;
+  };
+  let findManagedBotByOwnerStub: sinon.SinonStub;
+
+  const MANAGER_TOKEN = 'manager-token-abc';
+  const MANAGER_BOT_ID = 'manager';
+  const BASE_URL = 'https://example.com';
+  const BOT_USERNAME = 'hellominds_bot';
+
+  const makeJobData = (overrides: Partial<{ userId: number; botStatus: string }> = {}) => ({
+    conversationId: `manager:${overrides.userId ?? 42}`,
+    userId: overrides.userId ?? 42,
+    chatId: 100,
+    messageId: 1,
+    text: 'hello',
+    firstName: 'Alice',
+    username: 'alice',
+  });
+
+  beforeEach(async () => {
+    mockTelegram = new MockTelegramClient();
+    mockTelegram.sendMessage.resolves({ message_id: 99, chat: { id: 100 }, date: 1 });
+
+    async function* defaultStream() { yield 'AI reply'; }
+    agentServiceStub = {
+      chatStream: sinon.stub().returns(defaultStream()),
+    };
+
+    findManagedBotByOwnerStub = sinon.stub().resolves(null);
+
+    const module = await esmock('../../src/services/manager-bot.ts', {
+      '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerStub },
+      '../../src/services/conversation-throttle.js': { checkThrottle: sinon.stub().resolves({ allowed: true, retryAfterMs: 0 }) },
+      '../../src/services/conversation-lock.js': { acquireLock: sinon.stub().resolves(true), releaseLock: sinon.stub().resolves() },
+      '../../src/queues/manager-queue.js': { managerQueue: { add: sinon.stub().resolves({ id: 'j1' }) } },
+    });
+    processManagerMessage = module.processManagerMessage;
+  });
+
+  afterEach(async () => {
+    sinon.restore();
+    await esmock.purge();
+  });
+
+  it('routes to onboarding system prompt when no bot', async () => {
+    findManagedBotByOwnerStub.resolves(null);
+    const jobData = makeJobData();
+    await processManagerMessage(jobData, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+    const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
+    expect(systemPrompt).to.include('onboarding');
+  });
+
+  it('routes to settings system prompt when bot is ACTIVE', async () => {
+    findManagedBotByOwnerStub.resolves({ status: 'ACTIVE', bot_username: 'alicebot' });
+    const jobData = makeJobData();
+    await processManagerMessage(jobData, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+    const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
+    expect(systemPrompt).to.include('account creation');
+  });
+
+  it('calls agentService.chatStream and sends reply', async () => {
+    async function* stream() { yield 'Hello world'; }
+    agentServiceStub.chatStream.returns(stream());
+    const jobData = makeJobData();
+    await processManagerMessage(jobData, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+    expect(agentServiceStub.chatStream.calledOnce).to.be.true;
+    expect(mockTelegram.sendMessage.calledOnce).to.be.true;
+    const text: string = mockTelegram.sendMessage.firstCall.args[2];
+    expect(text).to.include('Hello world');
+  });
+
+  it('sends error fallback when chatStream throws', async () => {
+    async function* throwingStream(): AsyncGenerator<string> { throw new Error('LLM down'); yield ''; }
+    agentServiceStub.chatStream.returns(throwingStream());
+    const jobData = makeJobData();
+    await processManagerMessage(jobData, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+    expect(mockTelegram.sendMessage.calledOnce).to.be.true;
+    const fallback: string = mockTelegram.sendMessage.firstCall.args[2];
+    expect(fallback).to.include('Sorry');
+    expect(fallback).to.include('try again');
   });
 });

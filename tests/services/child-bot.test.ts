@@ -14,6 +14,7 @@ describe('child-bot service', () => {
   let sendMessageStub: sinon.SinonStub;
   let answerCallbackQueryStub: sinon.SinonStub;
   let getDecryptedBotTokenStub: sinon.SinonStub;
+  let queueAddStub: sinon.SinonStub;
   let agentServiceStub: {
     chat: sinon.SinonStub;
     chatStream: sinon.SinonStub;
@@ -30,6 +31,7 @@ describe('child-bot service', () => {
     sendMessageStub = sinon.stub().resolves({});
     answerCallbackQueryStub = sinon.stub().resolves(true);
     getDecryptedBotTokenStub = sinon.stub().resolves('child-token-123');
+    queueAddStub = sinon.stub().resolves({ id: 'job-1' });
 
     async function* defaultStream() { yield 'AI reply'; }
     agentServiceStub = {
@@ -54,6 +56,13 @@ describe('child-bot service', () => {
         },
       },
       '../../src/services/token-store.js': { getDecryptedBotToken: getDecryptedBotTokenStub },
+      '../../src/services/conversation-lock.js': {
+        acquireLock: sinon.stub().resolves(true),
+        releaseLock: sinon.stub().resolves(),
+      },
+      '../../src/queues/child-queue.js': {
+        childQueue: { add: queueAddStub },
+      },
     });
     provisionChildBot = module.provisionChildBot;
     handleChildBotMessage = module.handleChildBotMessage;
@@ -121,19 +130,18 @@ describe('child-bot service', () => {
     });
 
     it('routes regular messages to agentService.chat (no echo)', async () => {
-      async function* stream() { yield 'AI answer here'; }
-      agentServiceStub.chatStream.returns(stream());
       await handleChildBotMessage(42, makeMessage('hello world'), agentServiceStub);
-      expect(sendMessageStub.calledOnce).to.be.true;
-      expect(sendMessageStub.firstCall.args[2]).to.equal('AI answer here');
-      // Must NOT echo
-      expect(sendMessageStub.firstCall.args[2]).not.to.include('Echo:');
+      // AI messages are now enqueued — verify queue.add was called, not chatStream
+      expect(queueAddStub.calledOnce).to.be.true;
+      expect(agentServiceStub.chatStream.called).to.be.false;
     });
 
     it('calls agentService.chat with string botId', async () => {
       await handleChildBotMessage(42, makeMessage('test'), agentServiceStub);
-      expect(agentServiceStub.chatStream.calledOnce).to.be.true;
-      expect(agentServiceStub.chatStream.firstCall.args[0]).to.equal('42');
+      // AI messages are enqueued — verify job data contains the correct botId string
+      expect(queueAddStub.calledOnce).to.be.true;
+      const jobData = queueAddStub.firstCall.args[1];
+      expect(jobData.botId).to.equal('42');
     });
 
     it('sends error fallback when getDecryptedBotToken fails', async () => {
