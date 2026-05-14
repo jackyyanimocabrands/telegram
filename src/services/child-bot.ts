@@ -283,7 +283,17 @@ export async function processChildBotMessage(
       }
     }
 
-    // Final reply: splitAtSentenceBoundary guards against 4096-char Telegram limit
+    // ① Flush final draft with complete accumulated content — await it to
+    //    guarantee ordering: last draft resolves BEFORE sendMessage is called.
+    //    This also covers the throttle gap (last chunk may not have triggered a draft).
+    if (accumulated) {
+      await telegramClient.sendMessageDraft(token, chatId, draftId, toTelegramMarkdownV2(accumulated), 'MarkdownV2')
+        .catch((err: unknown) => {
+          logger.warn({ err, botId, chatId }, 'sendMessageDraft (final flush) failed (non-fatal)');
+        });
+    }
+
+    // ② Send permanent message — ordering now guaranteed
     const parts = splitAtSentenceBoundary(accumulated);
     for (const part of parts) {
       await telegramClient.sendMessage(token, chatId, toTelegramMarkdownV2(part), { parse_mode: 'MarkdownV2' });

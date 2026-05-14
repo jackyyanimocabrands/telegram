@@ -7,11 +7,13 @@ describe('child-bot service', () => {
   let provisionChildBot: any;
   let handleChildBotMessage: any;
   let handleChildBotCallback: any;
+  let processChildBotMessage: any;
   let setMyNameStub: sinon.SinonStub;
   let setMyDescriptionStub: sinon.SinonStub;
   let setMyShortDescriptionStub: sinon.SinonStub;
   let setMyCommandsStub: sinon.SinonStub;
   let sendMessageStub: sinon.SinonStub;
+  let sendMessageDraftStub: sinon.SinonStub;
   let answerCallbackQueryStub: sinon.SinonStub;
   let getDecryptedBotTokenStub: sinon.SinonStub;
   let queueAddStub: sinon.SinonStub;
@@ -28,6 +30,7 @@ describe('child-bot service', () => {
     setMyShortDescriptionStub = sinon.stub().resolves(true);
     setMyCommandsStub = sinon.stub().resolves(true);
     sendMessageStub = sinon.stub().resolves({});
+    sendMessageDraftStub = sinon.stub().resolves(true);
     answerCallbackQueryStub = sinon.stub().resolves(true);
     getDecryptedBotTokenStub = sinon.stub().resolves('child-token-123');
     queueAddStub = sinon.stub().resolves({ id: 'job-1' });
@@ -48,7 +51,7 @@ describe('child-bot service', () => {
           setMyShortDescription = setMyShortDescriptionStub;
           setMyCommands = setMyCommandsStub;
           sendMessage = sendMessageStub;
-          sendMessageDraft = sinon.stub().resolves(true);
+          sendMessageDraft = sendMessageDraftStub;
           sendChatAction = sinon.stub().resolves(true);
           answerCallbackQuery = answerCallbackQueryStub;
         },
@@ -65,6 +68,7 @@ describe('child-bot service', () => {
     provisionChildBot = module.provisionChildBot;
     handleChildBotMessage = module.handleChildBotMessage;
     handleChildBotCallback = module.handleChildBotCallback;
+    processChildBotMessage = module.processChildBotMessage;
   });
 
   afterEach(async () => {
@@ -179,6 +183,96 @@ describe('child-bot service', () => {
         threw = true;
       }
       expect(threw).to.be.true;
+    });
+  });
+
+  describe('processChildBotMessage', () => {
+    const jobData = {
+      conversationId: 'child:42:12',
+      botId: '42',
+      userId: 12,
+      chatId: 999,
+      messageId: 1,
+      text: 'hello',
+    };
+
+    /** Build a fresh telegramClient stub with individually trackable stubs. */
+    function makeTelegramClientStub() {
+      const draftStub = sinon.stub().resolves(true);
+      const msgStub = sinon.stub().resolves({});
+      return {
+        sendMessageDraft: draftStub,
+        sendMessage: msgStub,
+        sendChatAction: sinon.stub().resolves(true),
+      };
+    }
+
+    it('calls final awaited sendMessageDraft with full accumulated content before sendMessage', async () => {
+      async function* twoChunks() { yield 'Hello'; yield ' world'; }
+      agentServiceStub.chatStream = sinon.stub().returns(twoChunks());
+
+      const client = makeTelegramClientStub();
+      await processChildBotMessage(jobData, client, agentServiceStub);
+
+      // Final flush must have been called with the complete text
+      const draftCalls = client.sendMessageDraft.getCalls();
+      const finalDraftCall = draftCalls[draftCalls.length - 1];
+      // The final awaited call carries the fully accumulated content
+      expect(finalDraftCall.args[3]).to.include('Hello');
+      expect(finalDraftCall.args[3]).to.include('world');
+    });
+
+    it('final sendMessageDraft is called before sendMessage (ordering guarantee)', async () => {
+      async function* oneChunk() { yield 'AI reply'; }
+      agentServiceStub.chatStream = sinon.stub().returns(oneChunk());
+
+      const client = makeTelegramClientStub();
+      await processChildBotMessage(jobData, client, agentServiceStub);
+
+      // sendMessage must be called after the final sendMessageDraft
+      const draftCalls = client.sendMessageDraft.getCalls();
+      const finalDraftCall = draftCalls[draftCalls.length - 1];
+      const firstMsgCall = client.sendMessage.getCall(0);
+
+      expect(finalDraftCall.calledBefore(firstMsgCall)).to.be.true;
+    });
+
+    it('does NOT call final sendMessageDraft when stream yields nothing (empty accumulated)', async () => {
+      async function* emptyStream() { /* no yields */ }
+      agentServiceStub.chatStream = sinon.stub().returns(emptyStream());
+
+      const client = makeTelegramClientStub();
+      await processChildBotMessage(jobData, client, agentServiceStub);
+
+      // With empty accumulated, the final flush (MarkdownV2 parse_mode variant) must NOT be called.
+      // The only possible draft call would be the "Thinking" bubble (plain text, no parse_mode arg).
+      const draftCalls = client.sendMessageDraft.getCalls();
+      const finalFlushCalls = draftCalls.filter((c) => c.args[4] === 'MarkdownV2');
+      expect(finalFlushCalls).to.have.length(0);
+    });
+
+    it('sends sendMessage with MarkdownV2 parse_mode', async () => {
+      async function* oneChunk() { yield 'AI reply'; }
+      agentServiceStub.chatStream = sinon.stub().returns(oneChunk());
+
+      const client = makeTelegramClientStub();
+      await processChildBotMessage(jobData, client, agentServiceStub);
+
+      expect(client.sendMessage.calledOnce).to.be.true;
+      const opts = client.sendMessage.firstCall.args[3];
+      expect(opts).to.deep.equal({ parse_mode: 'MarkdownV2' });
+    });
+
+    it('sends error fallback when chatStream throws', async () => {
+      agentServiceStub.chatStream = sinon.stub().returns(
+        (async function* () { throw new Error('LLM error'); })(),
+      );
+
+      const client = makeTelegramClientStub();
+      await processChildBotMessage(jobData, client, agentServiceStub);
+
+      expect(client.sendMessage.calledOnce).to.be.true;
+      expect(client.sendMessage.firstCall.args[2]).to.include('Sorry');
     });
   });
 });
