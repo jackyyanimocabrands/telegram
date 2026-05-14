@@ -13,9 +13,28 @@ import {
   END,
 } from '@langchain/langgraph';
 import { logger } from '../utils/logger.js';
-import { env } from '../config/env.js';
+import { llmConfig } from '../config/llm-config.js';
 import { ConversationService, toBaseMessages, fromBaseMessages } from './conversation.js';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
+import { getModelConfig } from './llm/model-registry.js';
+import { estimateTokens } from './llm/token-estimator.js';
+import { setConversationSystemPrompt } from '../db/queries/conversations.js';
+
+/**
+ * Strips unsafe fields (e.g. Authorization headers embedded by LangChain HTTP errors)
+ * before passing error context to the logger. Only safe scalar fields are extracted.
+ */
+function sanitizeLlmError(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    const errAsRecord = err as unknown as Record<string, unknown>;
+    return {
+      name: err.name,
+      message: err.message,
+      ...(typeof errAsRecord.status === 'number' && { status: errAsRecord.status }),
+    };
+  }
+  return { message: String(err) };
+}
 
 /**
  * Minimal factory interface used by the agent graph.
@@ -23,11 +42,8 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
  * tests inject `{ create: () => ({ invoke: stub }) }` directly.
  */
 export interface ILlmModelFactory {
-  create(provider: string, model: string): Pick<BaseChatModel, 'invoke' | 'stream'>;
+  create(provider: string, model: string, temperature?: number): Pick<BaseChatModel, 'invoke' | 'stream'>;
 }
-import { getModelConfig } from './llm/model-registry.js';
-import { estimateTokens } from './llm/token-estimator.js';
-import { setConversationSystemPrompt } from '../db/queries/conversations.js';
 
 // ── State annotation ────────────────────────────────────────────────────────
 
@@ -138,10 +154,11 @@ export async function loadHistoryNode(
 
   return {
     messages: builtMessages,
-    provider: row.llm_provider,
-    model: row.llm_model,
-    summarizationProvider: row.summarization_provider,
-    summarizationModel: row.summarization_model,
+    // Provider/model sourced from llmConfig, not DB
+    provider: llmConfig.chat.primary.provider,
+    model: llmConfig.chat.primary.model,
+    summarizationProvider: llmConfig.summarization.primary.provider,
+    summarizationModel: llmConfig.summarization.primary.model,
     summary: row.summary ?? '',
     forceSummarize: row.force_summarize,
   };
@@ -153,21 +170,46 @@ export async function loadHistoryNode(
  * TR-2: Exported for unit testing.
  *
  * Invokes the LLM with the full conversation context and returns the AI reply.
+ * Attempts the primary model first; falls back to llmConfig.chat.fallback on error.
  */
 export async function agentNode(
   state: AgentState,
   services: { modelFactory: ILlmModelFactory },
 ): Promise<Partial<AgentState>> {
   const { modelFactory } = services;
-  const model = modelFactory.create(state.provider, state.model);
+
   logger.debug(
     { provider: state.provider, model: state.model, messageCount: state.messages.length },
     'agentNode: invoking LLM',
   );
 
-  const aiMessage = await model.invoke(state.messages) as AIMessage;
-  logger.debug({ contentLength: String(aiMessage.content).length }, 'agentNode: got reply');
+  let aiMessage: AIMessage;
+  const primaryTemperature = llmConfig.chat.primary.temperature;
+  const primaryModel = modelFactory.create(state.provider, state.model, primaryTemperature);
 
+  try {
+    aiMessage = await primaryModel.invoke(state.messages) as AIMessage;
+  } catch (primaryErr) {
+    const fallback = llmConfig.chat.fallback;
+    if (!fallback) {
+      logger.error({ err: sanitizeLlmError(primaryErr), provider: state.provider, model: state.model }, 'agentNode: primary LLM failed, no fallback configured');
+      throw primaryErr;
+    }
+    logger.warn(
+      { err: sanitizeLlmError(primaryErr), primaryProvider: state.provider, primaryModel: state.model, fallbackProvider: fallback.provider, fallbackModel: fallback.model },
+      'agentNode: primary LLM failed, trying fallback',
+    );
+    const fallbackModel = modelFactory.create(fallback.provider, fallback.model, fallback.temperature);
+    aiMessage = await fallbackModel.invoke(state.messages) as AIMessage;
+    // Update state to reflect fallback was used
+    return {
+      messages: [aiMessage],
+      provider: fallback.provider,
+      model: fallback.model,
+    };
+  }
+
+  logger.debug({ contentLength: String(aiMessage.content).length }, 'agentNode: got reply');
   return { messages: [aiMessage] };
 }
 
@@ -239,7 +281,8 @@ export async function summarizeNode(
   const messagesToSummarize = historyMessages.slice(0, oldestCount);
 
   try {
-    const model = modelFactory.create(state.summarizationProvider, state.summarizationModel);
+    const primarySummarizationTemperature = llmConfig.summarization.primary.temperature;
+    let model = modelFactory.create(state.summarizationProvider, state.summarizationModel, primarySummarizationTemperature);
 
     const summarizationMessages = [
       new SystemMessage(
@@ -248,7 +291,33 @@ export async function summarizeNode(
       ...messagesToSummarize.filter(m => ['human', 'ai'].includes(m.getType())),
       new HumanMessage('Summarize the conversation above into 2-3 concise sentences.'),
     ];
-    const summaryResult = await model.invoke(summarizationMessages) as AIMessage;
+
+    let summaryResult: AIMessage;
+    let usedSummarizationProvider = state.summarizationProvider;
+    let usedSummarizationModel = state.summarizationModel;
+
+    try {
+      summaryResult = await model.invoke(summarizationMessages) as AIMessage;
+    } catch (primaryErr) {
+      const fallback = llmConfig.summarization.fallback;
+      if (!fallback) {
+        logger.warn({ err: sanitizeLlmError(primaryErr), provider: state.summarizationProvider, model: state.summarizationModel }, 'summarizeNode: primary summarization LLM failed, no fallback configured');
+        return {};
+      }
+      logger.warn(
+        { err: sanitizeLlmError(primaryErr), primaryProvider: state.summarizationProvider, primaryModel: state.summarizationModel, fallbackProvider: fallback.provider, fallbackModel: fallback.model },
+        'summarizeNode: primary summarization LLM failed, trying fallback',
+      );
+      try {
+        const fallbackModel = modelFactory.create(fallback.provider, fallback.model, fallback.temperature);
+        summaryResult = await fallbackModel.invoke(summarizationMessages) as AIMessage;
+        usedSummarizationProvider = fallback.provider;
+        usedSummarizationModel = fallback.model;
+      } catch (fallbackErr) {
+        logger.warn({ err: sanitizeLlmError(fallbackErr), provider: fallback.provider, model: fallback.model }, 'summarizeNode: fallback summarization LLM also failed, continuing without update');
+        return {};
+      }
+    }
 
     const newSummaryText =
       typeof summaryResult.content === 'string'
@@ -263,7 +332,14 @@ export async function summarizeNode(
     // Reset the force_summarize flag — fire-and-forget; failure is non-fatal
     if (state.forceSummarize) {
       services.conversationService.resetForceSummarize(state.botId, state.userId).catch((err: unknown) => {
-        logger.warn({ err, botId: state.botId, userId: state.userId }, 'summarizeNode: failed to reset force_summarize flag (non-fatal)');
+        logger.warn(
+          {
+            err: { message: err instanceof Error ? err.message : String(err), code: (err as Record<string, unknown>).code },
+            botId: state.botId,
+            userId: state.userId,
+          },
+          'summarizeNode: failed to reset force_summarize flag (non-fatal)',
+        );
       });
     }
 
@@ -282,9 +358,11 @@ export async function summarizeNode(
     return {
       messages: removeMessages,
       summary: newSummaryText,
+      summarizationProvider: usedSummarizationProvider,
+      summarizationModel: usedSummarizationModel,
     };
   } catch (err) {
-    logger.warn({ err }, 'summarizeNode: summarization failed, continuing without update');
+    logger.warn({ err: sanitizeLlmError(err) }, 'summarizeNode: summarization failed, continuing without update');
     return {};
   }
 }
@@ -295,6 +373,7 @@ export async function summarizeNode(
  * TR-2: Exported for unit testing.
  *
  * Persists the conversation history (minus system messages and sentinel) to DB.
+ * Also records which provider/model was actually used (fires-and-forgets on failure).
  */
 export async function saveNode(
   state: AgentState,
@@ -319,6 +398,12 @@ export async function saveNode(
     state.userId,
     conversationMessages,
     state.summary || null,
+    {
+      provider: state.provider,
+      model: state.model,
+      summarizationProvider: state.summarizationProvider,
+      summarizationModel: state.summarizationModel,
+    },
   );
 
   logger.debug(
@@ -478,24 +563,6 @@ export class AgentService {
   }
 
   /**
-   * Switch the LLM provider and model for a bot+user pair.
-   */
-  async switchProvider(
-    botId: string,
-    userId: number,
-    provider: string,
-    model: string,
-  ): Promise<void> {
-    logger.info({ botId, userId, provider, model }, 'AgentService.switchProvider');
-
-    // Validate provider is instantiable (will throw for missing API key etc.)
-    this.modelFactory.create(provider, model);
-
-    await this.conversationService.updateProvider(botId, userId, provider, model);
-    logger.info({ botId, userId, provider, model }, 'AgentService.switchProvider: done');
-  }
-
-  /**
    * Generate a warm system prompt for a child bot by distilling the conversation
    * history between the user and the manager bot.
    *
@@ -510,10 +577,8 @@ export class AgentService {
       return null;
     }
 
-    const model = this.modelFactory.create(
-      env.DEFAULT_SUMMARIZATION_PROVIDER,
-      env.DEFAULT_SUMMARIZATION_MODEL,
-    );
+    const { provider, model: modelName, temperature } = llmConfig.summarization.primary;
+    const model = this.modelFactory.create(provider, modelName, temperature);
 
     const historyMessages = toBaseMessages(row.messages);
 
@@ -543,7 +608,7 @@ export class AgentService {
       );
       return warmPrompt;
     } catch (err) {
-      logger.error({ err, botId, userId }, 'AgentService.generateWarmPrompt: failed');
+      logger.error({ err: sanitizeLlmError(err), botId, userId }, 'AgentService.generateWarmPrompt: failed');
       return null;
     }
   }

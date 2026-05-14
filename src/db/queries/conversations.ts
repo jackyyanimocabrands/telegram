@@ -57,7 +57,8 @@ export async function getConversation(
 export async function upsertConversation(
   botId: string,
   telegramUserId: number,
-  defaults: {
+  // Only written on INSERT — not used for LLM selection; selection is driven by llmConfig
+  initialMetadata: {
     llmProvider: string;
     llmModel: string;
     summarizationProvider: string;
@@ -80,10 +81,10 @@ export async function upsertConversation(
     [
       botId,
       telegramUserId,
-      defaults.llmProvider,
-      defaults.llmModel,
-      defaults.summarizationProvider,
-      defaults.summarizationModel,
+      initialMetadata.llmProvider,
+      initialMetadata.llmModel,
+      initialMetadata.summarizationProvider,
+      initialMetadata.summarizationModel,
     ],
   );
 
@@ -97,31 +98,38 @@ export async function updateConversationMessages(
   telegramUserId: number,
   messages: ConversationMessage[],
   summary: string | null,
+  lastUsed?: {
+    provider: string;
+    model: string;
+    summarizationProvider: string;
+    summarizationModel: string;
+  },
   pool: Pool = defaultPool,
 ): Promise<void> {
   logger.debug({ botId, telegramUserId }, 'updateConversationMessages');
-  await pool.query(
-    `UPDATE conversations
-     SET messages = $1::jsonb, summary = $2, updated_at = now()
-     WHERE bot_id = $3 AND telegram_user_id = $4`,
-    [serializeMessages(messages), summary, botId, telegramUserId],
-  );
-}
-
-export async function updateConversationProvider(
-  botId: string,
-  telegramUserId: number,
-  provider: string,
-  model: string,
-  pool: Pool = defaultPool,
-): Promise<void> {
-  logger.debug({ botId, telegramUserId, provider, model }, 'updateConversationProvider');
-  await pool.query(
-    `UPDATE conversations
-     SET llm_provider = $1, llm_model = $2, updated_at = now()
-     WHERE bot_id = $3 AND telegram_user_id = $4`,
-    [provider, model, botId, telegramUserId],
-  );
+  if (lastUsed) {
+    await pool.query(
+      `UPDATE conversations
+       SET messages = $1::jsonb, summary = $2,
+           llm_provider = $3, llm_model = $4,
+           summarization_provider = $5, summarization_model = $6,
+           updated_at = now()
+       WHERE bot_id = $7 AND telegram_user_id = $8`,
+      [
+        serializeMessages(messages), summary,
+        lastUsed.provider, lastUsed.model,
+        lastUsed.summarizationProvider, lastUsed.summarizationModel,
+        botId, telegramUserId,
+      ],
+    );
+  } else {
+    await pool.query(
+      `UPDATE conversations
+       SET messages = $1::jsonb, summary = $2, updated_at = now()
+       WHERE bot_id = $3 AND telegram_user_id = $4`,
+      [serializeMessages(messages), summary, botId, telegramUserId],
+    );
+  }
 }
 
 export async function clearConversation(

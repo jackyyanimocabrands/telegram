@@ -96,6 +96,7 @@ CREATE TABLE conversations (
   messages                JSONB        NOT NULL DEFAULT '[]',
   summary                 TEXT,
   system_prompt           TEXT,
+  force_summarize         BOOLEAN      NOT NULL DEFAULT FALSE,
   created_at              TIMESTAMPTZ  NOT NULL DEFAULT now(),
   updated_at              TIMESTAMPTZ  NOT NULL DEFAULT now(),
   UNIQUE (bot_id, telegram_user_id)

@@ -24,7 +24,6 @@ describe('child-bot AI integration', () => {
     chat: sinon.SinonStub;
     chatStream: sinon.SinonStub;
     clearContext: sinon.SinonStub;
-    switchProvider: sinon.SinonStub;
     generateWarmPrompt: sinon.SinonStub;
   };
 
@@ -79,7 +78,6 @@ describe('child-bot AI integration', () => {
       chat: sinon.stub().resolves('AI response'),
       chatStream: sinon.stub().returns(defaultStream()),
       clearContext: sinon.stub().resolves(),
-      switchProvider: sinon.stub().resolves(),
       generateWarmPrompt: sinon.stub().resolves(null),
     };
 
@@ -125,69 +123,6 @@ describe('child-bot AI integration', () => {
     expect(sendMessageStub.calledOnce).to.be.true;
     const replyText: string = sendMessageStub.firstCall.args[2];
     expect(replyText).to.include('cleared');
-  });
-
-  // ── /provider command ─────────────────────────────────────────────────────
-
-  it('/provider openai gpt-4o calls agentService.switchProvider with correct args', async () => {
-    await handleChildBotMessage(BOT_ID, makeMessage('/provider openai gpt-4o'), agentServiceStub);
-
-    expect(agentServiceStub.switchProvider.calledOnce).to.be.true;
-    expect(agentServiceStub.switchProvider.firstCall.args[0]).to.equal(String(BOT_ID));
-    expect(agentServiceStub.switchProvider.firstCall.args[1]).to.equal(USER_ID);
-    expect(agentServiceStub.switchProvider.firstCall.args[2]).to.equal('openai');
-    expect(agentServiceStub.switchProvider.firstCall.args[3]).to.equal('gpt-4o');
-  });
-
-  it('/provider openai (no model) calls agentService.switchProvider with a default model', async () => {
-    await handleChildBotMessage(BOT_ID, makeMessage('/provider openai'), agentServiceStub);
-
-    expect(agentServiceStub.switchProvider.calledOnce).to.be.true;
-    const model: string = agentServiceStub.switchProvider.firstCall.args[3];
-    expect(model.length).to.be.greaterThan(0);
-  });
-
-  it('/provider openai gpt-99 (unknown model) sends "Unknown model" reply and falls back to gpt-4o', async () => {
-    await handleChildBotMessage(BOT_ID, makeMessage('/provider openai gpt-99'), agentServiceStub);
-
-    // First sendMessage call should mention the unknown model or the fallback
-    expect(sendMessageStub.called).to.be.true;
-    const firstReply: string = sendMessageStub.firstCall.args[2];
-    expect(firstReply.toLowerCase()).to.satisfy(
-      (s: string) => s.includes('unknown model') || s.includes('gpt-4o'),
-      'reply should mention "Unknown model" or the fallback model name',
-    );
-
-    // switchProvider must be called with the fallback gpt-4o, never gpt-99
-    expect(agentServiceStub.switchProvider.calledOnce).to.be.true;
-    expect(agentServiceStub.switchProvider.firstCall.args[3]).to.equal('gpt-4o');
-    expect(agentServiceStub.switchProvider.firstCall.args[3]).to.not.equal('gpt-99');
-  });
-
-  it('/provider openai sends success confirmation reply', async () => {
-    await handleChildBotMessage(BOT_ID, makeMessage('/provider openai gpt-4o'), agentServiceStub);
-
-    expect(sendMessageStub.calledOnce).to.be.true;
-    const replyText: string = sendMessageStub.firstCall.args[2];
-    expect(replyText).to.include('Switched to openai');
-  });
-
-  it('/provider with unsupported provider name replies with error message', async () => {
-    await handleChildBotMessage(BOT_ID, makeMessage('/provider fakeai'), agentServiceStub);
-
-    expect(sendMessageStub.calledOnce).to.be.true;
-    const replyText: string = sendMessageStub.firstCall.args[2];
-    expect(replyText).to.include('Unknown provider');
-    expect(agentServiceStub.switchProvider.called).to.be.false;
-  });
-
-  it('/provider with no args replies with error message', async () => {
-    await handleChildBotMessage(BOT_ID, makeMessage('/provider'), agentServiceStub);
-
-    expect(sendMessageStub.calledOnce).to.be.true;
-    const replyText: string = sendMessageStub.firstCall.args[2];
-    expect(replyText).to.include('Invalid provider');
-    expect(agentServiceStub.switchProvider.called).to.be.false;
   });
 
   // ── Regular message → AI chat (enqueue path) ──────────────────────────────
@@ -324,7 +259,6 @@ describe('child-bot AI integration', () => {
     expect(sendMessageStub.calledOnce).to.be.true;
     const help: string = sendMessageStub.firstCall.args[2];
     expect(help).to.include('/clear');
-    expect(help).to.include('/provider');
   });
 
   // ── Message length cap ────────────────────────────────────────────────────

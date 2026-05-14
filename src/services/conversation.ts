@@ -1,10 +1,9 @@
 import { HumanMessage, AIMessage, SystemMessage, BaseMessage } from '@langchain/core/messages';
-import { env } from '../config/env.js';
+import { llmConfig } from '../config/llm-config.js';
 import { logger } from '../utils/logger.js';
 import {
   upsertConversation,
   updateConversationMessages,
-  updateConversationProvider,
   resetForceSummarize,
   type ConversationRow,
 } from '../db/queries/conversations.js';
@@ -12,30 +11,41 @@ import type { ConversationMessage } from '../types/conversation.js';
 
 export class ConversationService {
   /**
-   * Load (or create with defaults) the conversation row for a given bot + user pair.
+   * Load (or create with initialMetadata) the conversation row for a given bot + user pair.
+   * initialMetadata is only written on INSERT — not used for LLM selection;
+   * selection is driven by llmConfig at graph runtime.
    */
   async load(botId: string, telegramUserId: number): Promise<ConversationRow> {
     logger.debug({ botId, telegramUserId }, 'ConversationService.load');
-    return upsertConversation(botId, telegramUserId, {
-      llmProvider: env.DEFAULT_LLM_PROVIDER,
-      llmModel: env.DEFAULT_LLM_MODEL,
-      summarizationProvider: env.DEFAULT_SUMMARIZATION_PROVIDER,
-      summarizationModel: env.DEFAULT_SUMMARIZATION_MODEL,
-    });
+    // Only written on INSERT — not used for LLM selection; selection is driven by llmConfig
+    const initialMetadata = {
+      llmProvider: llmConfig.chat.primary.provider,
+      llmModel: llmConfig.chat.primary.model,
+      summarizationProvider: llmConfig.summarization.primary.provider,
+      summarizationModel: llmConfig.summarization.primary.model,
+    };
+    return upsertConversation(botId, telegramUserId, initialMetadata);
   }
 
   /**
    * Persist the full message history (including the new user turn and assistant reply)
-   * back to the database.
+   * back to the database. Optionally merges the provider/model "last used" columns
+   * into the same UPDATE to avoid a second round-trip.
    */
   async save(
     botId: string,
     telegramUserId: number,
     allMessages: ConversationMessage[],
     summary: string | null,
+    lastUsed?: {
+      provider: string;
+      model: string;
+      summarizationProvider: string;
+      summarizationModel: string;
+    },
   ): Promise<void> {
     logger.debug({ botId, telegramUserId, messageCount: allMessages.length }, 'ConversationService.save');
-    await updateConversationMessages(botId, telegramUserId, allMessages, summary);
+    await updateConversationMessages(botId, telegramUserId, allMessages, summary, lastUsed);
   }
 
   /**
@@ -44,19 +54,6 @@ export class ConversationService {
   async clearMessages(botId: string, telegramUserId: number): Promise<void> {
     logger.debug({ botId, telegramUserId }, 'ConversationService.clearMessages');
     await updateConversationMessages(botId, telegramUserId, [], null);
-  }
-
-  /**
-   * Update the LLM provider and model for a bot+user pair.
-   */
-  async updateProvider(
-    botId: string,
-    telegramUserId: number,
-    provider: string,
-    model: string,
-  ): Promise<void> {
-    logger.debug({ botId, telegramUserId, provider, model }, 'ConversationService.updateProvider');
-    await updateConversationProvider(botId, telegramUserId, provider, model);
   }
 
   /**

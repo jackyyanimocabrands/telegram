@@ -33,17 +33,13 @@ const envSchema = z.object({
       }
       return val;
     }),
-  // LLM provider configuration
+  // LLM provider API keys (cross-validation now done in src/config/llm-config.ts)
   OPENAI_API_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
   DEEPSEEK_API_KEY: z.string().optional(),
   OPENROUTER_API_KEY: z.string().optional(),
-  DEFAULT_LLM_PROVIDER: z.enum(['openai', 'anthropic', 'deepseek', 'openrouter']).default('openai'),
-  DEFAULT_LLM_MODEL: z.string().default('gpt-4o'),
-  DEFAULT_SUMMARIZATION_PROVIDER: z.enum(['openai', 'anthropic', 'deepseek', 'openrouter']).default('openai'),
-  DEFAULT_SUMMARIZATION_MODEL: z.string().default('gpt-4o-mini'),
-  FALLBACK_LLM_PROVIDER: z.enum(['openai', 'anthropic', 'deepseek', 'openrouter']).optional(),
-  FALLBACK_LLM_MODEL: z.string().optional(),
+  // Path to the LLM config JSON file (default: config/llm.json)
+  LLM_CONFIG_PATH: z.string().optional(),
   // Manager bot system prompts (optional — hardcoded defaults used if absent)
   MANAGER_ONBOARDING_PROMPT: z.string().optional(),
   MANAGER_SETTINGS_PROMPT: z.string().optional(),
@@ -54,55 +50,6 @@ const envSchema = z.object({
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).default(4),
   JOB_RETENTION_HOURS: z.coerce.number().int().min(0).default(24),
   LOCK_TTL_SECS: z.coerce.number().int().min(10).default(60),
-}).superRefine((data, ctx) => {
-  // DEFAULT_LLM_PROVIDER key requirements
-  if (data.DEFAULT_LLM_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['OPENAI_API_KEY'], message: 'OPENAI_API_KEY is required when DEFAULT_LLM_PROVIDER is "openai"' });
-  }
-  if (data.DEFAULT_LLM_PROVIDER === 'anthropic' && !data.ANTHROPIC_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ANTHROPIC_API_KEY'], message: 'ANTHROPIC_API_KEY is required when DEFAULT_LLM_PROVIDER is "anthropic"' });
-  }
-  if (data.DEFAULT_LLM_PROVIDER === 'deepseek' && !data.DEEPSEEK_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['DEEPSEEK_API_KEY'], message: 'DEEPSEEK_API_KEY is required when DEFAULT_LLM_PROVIDER is "deepseek"' });
-  }
-  if (data.DEFAULT_LLM_PROVIDER === 'openrouter' && !data.OPENROUTER_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['OPENROUTER_API_KEY'], message: 'OPENROUTER_API_KEY is required when DEFAULT_LLM_PROVIDER is "openrouter"' });
-  }
-  // DEFAULT_SUMMARIZATION_PROVIDER key requirements
-  if (data.DEFAULT_SUMMARIZATION_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['OPENAI_API_KEY'], message: 'OPENAI_API_KEY is required when DEFAULT_SUMMARIZATION_PROVIDER is "openai"' });
-  }
-  if (data.DEFAULT_SUMMARIZATION_PROVIDER === 'anthropic' && !data.ANTHROPIC_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ANTHROPIC_API_KEY'], message: 'ANTHROPIC_API_KEY is required when DEFAULT_SUMMARIZATION_PROVIDER is "anthropic"' });
-  }
-  if (data.DEFAULT_SUMMARIZATION_PROVIDER === 'deepseek' && !data.DEEPSEEK_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['DEEPSEEK_API_KEY'], message: 'DEEPSEEK_API_KEY is required when DEFAULT_SUMMARIZATION_PROVIDER is "deepseek"' });
-  }
-  if (data.DEFAULT_SUMMARIZATION_PROVIDER === 'openrouter' && !data.OPENROUTER_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['OPENROUTER_API_KEY'], message: 'OPENROUTER_API_KEY is required when DEFAULT_SUMMARIZATION_PROVIDER is "openrouter"' });
-  }
-  // FALLBACK_LLM_PROVIDER and FALLBACK_LLM_MODEL must both be set or neither
-  const hasProvider = data.FALLBACK_LLM_PROVIDER !== undefined;
-  const hasModel = data.FALLBACK_LLM_MODEL !== undefined;
-  if (hasProvider && !hasModel) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FALLBACK_LLM_MODEL'], message: 'FALLBACK_LLM_MODEL is required when FALLBACK_LLM_PROVIDER is set' });
-  }
-  if (hasModel && !hasProvider) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FALLBACK_LLM_PROVIDER'], message: 'FALLBACK_LLM_PROVIDER is required when FALLBACK_LLM_MODEL is set' });
-  }
-  // FALLBACK_LLM_PROVIDER API key requirements
-  if (data.FALLBACK_LLM_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'OPENAI_API_KEY is required when FALLBACK_LLM_PROVIDER is openai', path: ['OPENAI_API_KEY'] });
-  }
-  if (data.FALLBACK_LLM_PROVIDER === 'anthropic' && !data.ANTHROPIC_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'ANTHROPIC_API_KEY is required when FALLBACK_LLM_PROVIDER is anthropic', path: ['ANTHROPIC_API_KEY'] });
-  }
-  if (data.FALLBACK_LLM_PROVIDER === 'deepseek' && !data.DEEPSEEK_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'DEEPSEEK_API_KEY is required when FALLBACK_LLM_PROVIDER is deepseek', path: ['DEEPSEEK_API_KEY'] });
-  }
-  if (data.FALLBACK_LLM_PROVIDER === 'openrouter' && !data.OPENROUTER_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'OPENROUTER_API_KEY is required when FALLBACK_LLM_PROVIDER is openrouter', path: ['OPENROUTER_API_KEY'] });
-  }
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -110,8 +57,17 @@ export type Env = z.infer<typeof envSchema>;
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
+  const SENSITIVE_KEYS = new Set([
+    'ENCRYPTION_MASTER_KEY', 'ES256_PRIVATE_KEY', 'ES256_PUBLIC_KEY',
+    'BOT_TOKEN', 'BOT_USERNAME', 'WEBHOOK_SECRET', 'CHILD_WEBHOOK_SECRET',
+    'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'OPENROUTER_API_KEY',
+  ]);
+  const errors = parsed.error.flatten().fieldErrors;
+  const redacted = Object.fromEntries(
+    Object.entries(errors).map(([k, v]) => [k, SENSITIVE_KEYS.has(k) ? ['[REDACTED]'] : v]),
+  );
   console.error('Invalid environment variables:');
-  console.error(parsed.error.flatten().fieldErrors);
+  console.error(redacted);
   process.exit(1);
 }
 

@@ -3,13 +3,14 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import esmock from 'esmock';
 import type { ConversationRow } from '../../src/db/queries/conversations.js';
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function makeRow(overrides: Partial<ConversationRow> = {}): ConversationRow {
   return {
-    id: 1,
+    id: 'uuid-1',
     bot_id: 'bot-1',
     telegram_user_id: 42,
     llm_provider: 'openai',
@@ -19,11 +20,21 @@ function makeRow(overrides: Partial<ConversationRow> = {}): ConversationRow {
     messages: [],
     summary: null,
     system_prompt: null,
+    force_summarize: false,
     created_at: new Date(),
     updated_at: new Date(),
     ...overrides,
   };
 }
+
+const mockLlmConfig = {
+  chat: {
+    primary: { provider: 'openai', model: 'gpt-4o', temperature: 0.7 },
+  },
+  summarization: {
+    primary: { provider: 'openai', model: 'gpt-4o-mini', temperature: 0.7 },
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -39,6 +50,7 @@ describe('ConversationService', () => {
     updateConversationMessagesStub = sinon.stub().resolves();
 
     const module = await esmock('../../src/services/conversation.ts', {
+      '../../src/config/llm-config.js': { llmConfig: mockLlmConfig },
       '../../src/db/queries/conversations.js': {
         upsertConversation: upsertConversationStub,
         updateConversationMessages: updateConversationMessagesStub,
@@ -55,22 +67,23 @@ describe('ConversationService', () => {
   // ── load ─────────────────────────────────────────────────────────────────
 
   describe('load()', () => {
-    it('calls upsertConversation with env defaults', async () => {
+    it('calls upsertConversation with llmConfig values as initialMetadata', async () => {
       const svc = new ConversationService();
       await svc.load('bot-1', 42);
 
       expect(upsertConversationStub.calledOnce).to.be.true;
-      const [botId, telegramUserId, defaults] = upsertConversationStub.firstCall.args;
+      const [botId, telegramUserId, initialMetadata] = upsertConversationStub.firstCall.args;
       expect(botId).to.equal('bot-1');
       expect(telegramUserId).to.equal(42);
-      expect(defaults).to.have.property('llmProvider', process.env.DEFAULT_LLM_PROVIDER ?? 'openai');
-      expect(defaults).to.have.property('llmModel');
-      expect(defaults).to.have.property('summarizationProvider');
-      expect(defaults).to.have.property('summarizationModel');
+      // Values come from mockLlmConfig, not process.env
+      expect(initialMetadata).to.have.property('llmProvider', 'openai');
+      expect(initialMetadata).to.have.property('llmModel', 'gpt-4o');
+      expect(initialMetadata).to.have.property('summarizationProvider', 'openai');
+      expect(initialMetadata).to.have.property('summarizationModel', 'gpt-4o-mini');
     });
 
     it('returns the row from upsertConversation', async () => {
-      const expected = makeRow({ id: 99 });
+      const expected = makeRow({ id: 'uuid-99' });
       upsertConversationStub.resolves(expected);
       const svc = new ConversationService();
       const result = await svc.load('bot-1', 42);
@@ -102,6 +115,14 @@ describe('ConversationService', () => {
       await svc.save('bot-3', 10, [], null);
       const [, , , summary] = updateConversationMessagesStub.firstCall.args;
       expect(summary).to.be.null;
+    });
+
+    it('passes lastUsed arg through to updateConversationMessages when provided', async () => {
+      const svc = new ConversationService();
+      const lastUsed = { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022', summarizationProvider: 'openai', summarizationModel: 'gpt-4o-mini' };
+      await svc.save('bot-4', 5, [], null, lastUsed);
+      const [, , , , passedLastUsed] = updateConversationMessagesStub.firstCall.args;
+      expect(passedLastUsed).to.deep.equal(lastUsed);
     });
   });
 });

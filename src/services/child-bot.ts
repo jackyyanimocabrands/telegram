@@ -26,23 +26,6 @@ const telegram = createTelegramClient();
 /** Maximum allowed message length before we reject with a user-facing error. */
 const MAX_MESSAGE_LENGTH = 2000;
 
-/**
- * Model allowlist per provider. Only these models can be selected via /provider.
- * If the user passes an unknown model we fall back to the first listed model.
- */
-const ALLOWED_MODELS: Record<string, readonly string[]> = {
-  openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
-  anthropic: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'],
-  deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-  openrouter: [
-    'openai/gpt-4o',
-    'anthropic/claude-3-5-sonnet',
-    'deepseek/deepseek-chat',
-    'google/gemini-2.0-flash-001',
-    'meta-llama/llama-3.3-70b-instruct',
-  ],
-};
-
 export async function provisionChildBot(
   token: string,
   botId: number,
@@ -71,11 +54,17 @@ export async function provisionChildBot(
     { command: 'start', description: 'Start the bot' },
     { command: 'help', description: 'Show available commands' },
     { command: 'clear', description: 'Reset conversation history' },
-    { command: 'provider', description: 'Switch AI model (/provider openai gpt-4o)' },
   ]);
   logger.debug({ botId }, 'provisionChildBot: commands set');
 
   logger.info({ botId }, 'provisionChildBot: complete (profile + commands)');
+}
+
+/** Module-level counter for unique draft message IDs (32-bit safe). */
+let _draftCounter = 0;
+function nextDraftId(): number {
+  _draftCounter = (_draftCounter + 1) % 2_147_483_647;
+  return _draftCounter;
 }
 
 /**
@@ -155,7 +144,7 @@ export async function handleChildBotMessage(
       await telegram.sendMessage(
         token,
         chatId,
-        '/start - Start the bot\n/help - Show available commands\n/clear - Reset conversation history\n/provider <name> [model] - Switch AI provider (e.g. /provider openai gpt-4o)',
+        '/start - Start the bot\n/help - Show available commands\n/clear - Reset conversation history',
       );
       return;
     }
@@ -164,63 +153,6 @@ export async function handleChildBotMessage(
       logger.debug({ botId, chatId }, 'handleChildBotMessage: handling /clear');
       await agentService.clearContext(botIdStr, userId);
       await telegram.sendMessage(token, chatId, 'Conversation cleared! What would you like to talk about?');
-      return;
-    }
-
-    if (text.startsWith('/provider')) {
-      logger.debug({ botId, chatId }, 'handleChildBotMessage: handling /provider');
-      const args = text.slice('/provider'.length).trim().split(/\s+/).filter(Boolean);
-      const providerArg = args[0] ?? '';
-      const modelArg = args[1] ?? '';
-
-      if (!providerArg) {
-        await telegram.sendMessage(
-          token,
-          chatId,
-          'Invalid provider. Use: /provider openai [model] or /provider anthropic [model]',
-        );
-        return;
-      }
-
-      // Validate provider against allowlist
-      const allowedModels = ALLOWED_MODELS[providerArg];
-      if (!allowedModels) {
-        await telegram.sendMessage(
-          token,
-          chatId,
-          `Unknown provider "${providerArg}". Use: /provider openai or /provider anthropic`,
-        );
-        return;
-      }
-
-      // Validate model — fall back to first allowed model if unknown
-      const effectiveModel = modelArg && allowedModels.includes(modelArg)
-        ? modelArg
-        : allowedModels[0]!;
-
-      if (modelArg && !allowedModels.includes(modelArg)) {
-        await telegram.sendMessage(
-          token,
-          chatId,
-          `Unknown model "${modelArg}" for ${providerArg}. Using ${effectiveModel} instead. Available: ${allowedModels.join(', ')}`,
-        );
-      }
-
-      try {
-        await agentService.switchProvider(botIdStr, userId, providerArg, effectiveModel);
-        await telegram.sendMessage(
-          token,
-          chatId,
-          `Switched to ${providerArg} (${effectiveModel}).`,
-        );
-      } catch (err) {
-        logger.warn({ err, provider: providerArg, model: effectiveModel }, 'handleChildBotMessage: switchProvider failed');
-        await telegram.sendMessage(
-          token,
-          chatId,
-          'Sorry, that provider is not available. Please check your command and try again.',
-        );
-      }
       return;
     }
 
@@ -310,8 +242,8 @@ export async function processChildBotMessage(
 
   const token = await getDecryptedBotToken(Number(botId));
 
-  // draft_id: unique integer per message
-  const draftId = Math.floor(Date.now() + Math.random() * 1000);
+  // draft_id: unique integer per message (32-bit safe, collision-free)
+  const draftId = nextDraftId();
 
   // tryTyping: sendChatAction with internal 4s throttle — failure is non-fatal
   const TYPING_REFRESH_MS = 4000;

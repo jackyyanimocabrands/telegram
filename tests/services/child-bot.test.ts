@@ -19,7 +19,6 @@ describe('child-bot service', () => {
     chat: sinon.SinonStub;
     chatStream: sinon.SinonStub;
     clearContext: sinon.SinonStub;
-    switchProvider: sinon.SinonStub;
     generateWarmPrompt: sinon.SinonStub;
   };
 
@@ -38,7 +37,6 @@ describe('child-bot service', () => {
       chat: sinon.stub().resolves('AI reply'),
       chatStream: sinon.stub().returns(defaultStream()),
       clearContext: sinon.stub().resolves(),
-      switchProvider: sinon.stub().resolves(),
       generateWarmPrompt: sinon.stub().resolves(null),
     };
 
@@ -99,13 +97,13 @@ describe('child-bot service', () => {
       expect(setMyNameStub.firstCall.args[1]).to.include('Bob');
     });
 
-    it('sets exactly 4 commands (start, help, clear, provider)', async () => {
+    it('sets exactly 3 commands (start, help, clear)', async () => {
       await provisionChildBot('token', 42, 'Alice');
       const commands = setMyCommandsStub.firstCall.args[1];
-      expect(commands).to.have.length(4);
+      expect(commands).to.have.length(3);
       const names = commands.map((c: { command: string }) => c.command);
       expect(names).to.include('clear');
-      expect(names).to.include('provider');
+      expect(names).to.not.include('provider');
     });
   });
 

@@ -11,7 +11,6 @@ describe('handleManagerBotMessage', () => {
     chat: sinon.SinonStub;
     chatStream: sinon.SinonStub;
     clearContext: sinon.SinonStub;
-    switchProvider: sinon.SinonStub;
     generateWarmPrompt: sinon.SinonStub;
   };
   let findManagedBotByOwnerStub: sinon.SinonStub;
@@ -54,7 +53,6 @@ describe('handleManagerBotMessage', () => {
       chat: sinon.stub().resolves('AI reply'),
       chatStream: sinon.stub().returns(defaultStream()),
       clearContext: sinon.stub().resolves(),
-      switchProvider: sinon.stub().resolves(),
       generateWarmPrompt: sinon.stub().resolves(null),
     };
 

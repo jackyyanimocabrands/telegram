@@ -10,7 +10,7 @@ import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages
 
 function makeRow(overrides: Record<string, unknown> = {}) {
   return {
-    id: 1,
+    id: 'uuid-1',
     bot_id: 'bot-1',
     telegram_user_id: 42,
     llm_provider: 'openai',
@@ -20,6 +20,7 @@ function makeRow(overrides: Record<string, unknown> = {}) {
     messages: [],
     summary: null,
     system_prompt: null,
+    force_summarize: false,
     created_at: new Date(),
     updated_at: new Date(),
     ...overrides,
@@ -35,7 +36,6 @@ function makeConvService(rowOverrides: Record<string, unknown> = {}) {
     load: sinon.stub().resolves(makeRow(rowOverrides)),
     save: sinon.stub().resolves(),
     clearMessages: sinon.stub().resolves(),
-    updateProvider: sinon.stub().resolves(),
     resetForceSummarize: sinon.stub().resolves(),
   };
 }
@@ -55,27 +55,27 @@ function makeModelFactory(reply = 'test reply') {
 }
 
 // ---------------------------------------------------------------------------
-// Build AgentService with esmocked env + DB stubs
+// Build AgentService with esmocked llm-config + DB stubs
 // ---------------------------------------------------------------------------
+
+const mockLlmConfig = {
+  chat: {
+    primary: { provider: 'openai', model: 'gpt-4o', temperature: 0.7 },
+  },
+  summarization: {
+    primary: { provider: 'openai', model: 'gpt-4o-mini', temperature: 0.7 },
+  },
+};
 
 let setConversationSystemPromptStub: sinon.SinonStub;
 
-async function buildAgentService(envOverrides: Record<string, string | undefined> = {}) {
-  const baseEnv = {
-    DEFAULT_LLM_PROVIDER: 'openai',
-    DEFAULT_LLM_MODEL: 'gpt-4o',
-    DEFAULT_SUMMARIZATION_PROVIDER: 'openai',
-    DEFAULT_SUMMARIZATION_MODEL: 'gpt-4o-mini',
-    ...envOverrides,
-  };
-
+async function buildAgentService() {
   setConversationSystemPromptStub = sinon.stub().resolves();
 
   const module = await esmock('../../src/services/agent.ts', {
-    '../../src/config/env.js': { env: baseEnv },
+    '../../src/config/llm-config.js': { llmConfig: mockLlmConfig },
     '../../src/db/queries/conversations.js': {
       setConversationSystemPrompt: setConversationSystemPromptStub,
-      updateConversationProvider: sinon.stub().resolves(),
       clearConversation: sinon.stub().resolves(),
     },
   });
@@ -84,17 +84,9 @@ async function buildAgentService(envOverrides: Record<string, string | undefined
 
 async function buildAgentNodes() {
   const module = await esmock('../../src/services/agent.ts', {
-    '../../src/config/env.js': {
-      env: {
-        DEFAULT_LLM_PROVIDER: 'openai',
-        DEFAULT_LLM_MODEL: 'gpt-4o',
-        DEFAULT_SUMMARIZATION_PROVIDER: 'openai',
-        DEFAULT_SUMMARIZATION_MODEL: 'gpt-4o-mini',
-      },
-    },
+    '../../src/config/llm-config.js': { llmConfig: mockLlmConfig },
     '../../src/db/queries/conversations.js': {
       setConversationSystemPrompt: sinon.stub().resolves(),
-      updateConversationProvider: sinon.stub().resolves(),
       clearConversation: sinon.stub().resolves(),
     },
   });
@@ -216,8 +208,9 @@ describe('AgentService (LangGraph)', () => {
       expect(convSvc.load.calledOnceWith('my-bot', 99)).to.be.true;
     });
 
-    it('uses provider and model from conversation row', async () => {
+    it('uses provider and model from llmConfig (not DB row)', async () => {
       const AgentService = await buildAgentService();
+      // DB row has different provider/model — agent should use llmConfig values
       const convSvc = makeConvService({
         llm_provider: 'anthropic',
         llm_model: 'claude-3-5-sonnet-20241022',
@@ -227,7 +220,8 @@ describe('AgentService (LangGraph)', () => {
       const svc = new AgentService(convSvc, stubFactory);
       await svc.chat('bot-1', 42, 'hello');
 
-      expect(stubFactory.create.calledWith('anthropic', 'claude-3-5-sonnet-20241022')).to.be.true;
+      // mockLlmConfig.chat.primary = openai / gpt-4o
+      expect(stubFactory.create.calledWith('openai', 'gpt-4o')).to.be.true;
     });
   });
 
@@ -243,56 +237,6 @@ describe('AgentService (LangGraph)', () => {
       await svc.clearContext('bot-1', 42);
 
       expect(convSvc.clearMessages.calledOnceWith('bot-1', 42)).to.be.true;
-    });
-  });
-
-  // ── switchProvider() ──────────────────────────────────────────────────────
-
-  describe('switchProvider()', () => {
-    it('calls conversationService.updateProvider with correct args', async () => {
-      const AgentService = await buildAgentService();
-      const convSvc = makeConvService();
-      const { stubFactory } = makeModelFactory();
-
-      const svc = new AgentService(convSvc, stubFactory);
-      await svc.switchProvider('bot-1', 42, 'anthropic', 'claude-3-5-sonnet-20241022');
-
-      expect(convSvc.updateProvider.calledOnceWith(
-        'bot-1', 42, 'anthropic', 'claude-3-5-sonnet-20241022',
-      )).to.be.true;
-    });
-
-    it('validates provider by calling modelFactory.create before updating', async () => {
-      const AgentService = await buildAgentService();
-      const convSvc = makeConvService();
-      const { stubFactory } = makeModelFactory();
-
-      const svc = new AgentService(convSvc, stubFactory);
-      await svc.switchProvider('bot-1', 42, 'anthropic', 'claude-3-5-haiku-20241022');
-
-      // factory.create called to validate the new provider is instantiable
-      expect(stubFactory.create.calledWith('anthropic', 'claude-3-5-haiku-20241022')).to.be.true;
-    });
-
-    it('propagates error from modelFactory.create (bad API key)', async () => {
-      const AgentService = await buildAgentService();
-      const convSvc = makeConvService();
-      const stubFactory = {
-        create: sinon.stub().throws(new Error('API key not configured')),
-      };
-
-      const svc = new AgentService(convSvc, stubFactory);
-
-      let thrown: unknown;
-      try {
-        await svc.switchProvider('bot-1', 42, 'openai', 'gpt-4o');
-      } catch (err) {
-        thrown = err;
-      }
-      expect(thrown).to.be.instanceOf(Error);
-      expect((thrown as Error).message).to.include('API key not configured');
-      // updateProvider must NOT be called when factory.create threw
-      expect(convSvc.updateProvider.called).to.be.false;
     });
   });
 
@@ -329,11 +273,8 @@ describe('AgentService (LangGraph)', () => {
       expect(result).to.equal(warmPrompt);
     });
 
-    it('calls modelFactory.create with DEFAULT_SUMMARIZATION_PROVIDER and MODEL', async () => {
-      const AgentService = await buildAgentService({
-        DEFAULT_SUMMARIZATION_PROVIDER: 'openai',
-        DEFAULT_SUMMARIZATION_MODEL: 'gpt-4o-mini',
-      });
+    it('calls modelFactory.create with summarization provider and model from llmConfig', async () => {
+      const AgentService = await buildAgentService();
       const convSvc = makeConvService({
         messages: [{ role: 'user', content: 'hello' }],
       });
@@ -342,6 +283,7 @@ describe('AgentService (LangGraph)', () => {
       const svc = new AgentService(convSvc, stubFactory);
       await svc.generateWarmPrompt('manager-bot', 99);
 
+      // mockLlmConfig summarization.primary = openai / gpt-4o-mini
       expect(stubFactory.create.calledWith('openai', 'gpt-4o-mini')).to.be.true;
     });
 
@@ -399,18 +341,16 @@ describe('AgentService (LangGraph)', () => {
     it('save is called even after summarization runs (graph completes)', async () => {
       const AgentService = await buildAgentService();
 
-      // Use unknown model to get FALLBACK budget (Math.floor(4096 * 0.8) = 3276 tokens).
-      // 20 messages × 700 chars = 14000 chars → 3500 tokens > 3276 → triggers summarize.
-      // This keeps the test fast while reliably hitting the summarize branch.
-      const longContent = 'x'.repeat(700);
-      const manyMessages = Array.from({ length: 20 }, (_, i) => ({
+      // Budget: mockLlmConfig chat.primary.model = 'gpt-4o' → maxTokens=128000, budget=102400.
+      // Need > 409600 chars: 410 messages × 1000 chars = 410000 chars → 102500 tokens > 102400.
+      const longContent = 'x'.repeat(1000);
+      const manyMessages = Array.from({ length: 410 }, (_, i) => ({
         role: i % 2 === 0 ? 'user' : 'assistant',
         content: longContent,
       }));
 
       const convSvc = makeConvService({
         messages: manyMessages,
-        llm_model: 'unknown-model-xyz', // FALLBACK maxTokens=4096, budget=3276
       });
 
       // Both agent and summarizer use the same factory stub
@@ -427,17 +367,16 @@ describe('AgentService (LangGraph)', () => {
       const AgentService = await buildAgentService();
 
       // Budget math (checkBudgetRouter uses maxTokens * 0.8, estimateTokens = floor(chars/4)):
-      //   Unknown model → FALLBACK maxTokens=4096, budget = floor(4096*0.8) = 3276 tokens
-      //   To trigger summarize: need currentTokens > 3276 → need > 13104 chars total.
-      //   20 messages × 700 chars = 14000 chars → 3500 tokens > 3276 ✓
-      //   Using unknown model ensures FALLBACK regardless of esmock module wiring.
-      const longContent = 'y'.repeat(700);
-      const manyMessages = Array.from({ length: 20 }, (_, i) => ({
+      //   mockLlmConfig → chat.primary.model = 'gpt-4o', maxTokens=128000, budget=102400
+      //   To trigger summarize: need totalTokens > 102400 → need > 409600 chars total.
+      //   410 messages × 1000 chars = 410000 chars → 102500 tokens > 102400 ✓
+      const longContent = 'y'.repeat(1000);
+      const manyMessages = Array.from({ length: 410 }, (_, i) => ({
         role: i % 2 === 0 ? 'user' : 'assistant',
         content: longContent,
       }));
 
-      const convSvc = makeConvService({ messages: manyMessages, llm_model: 'unknown-model-xyz' });
+      const convSvc = makeConvService({ messages: manyMessages });
       const { stubFactory } = makeModelFactory('reply');
 
       const svc = new AgentService(convSvc, stubFactory);

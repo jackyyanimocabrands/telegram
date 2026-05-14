@@ -49,7 +49,6 @@ describe('ManagedBotService', () => {
     mockAgentService = {
       chat: sinon.stub().resolves('reply'),
       clearContext: sinon.stub().resolves(),
-      switchProvider: sinon.stub().resolves(),
       generateWarmPrompt: sinon.stub().resolves(null),
     };
 

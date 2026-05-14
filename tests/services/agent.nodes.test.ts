@@ -2,20 +2,50 @@
  * Direct unit tests for the exported node functions in agent.ts:
  *   checkBudgetRouter, summarizeNode, saveNode, agentNode, loadHistoryNode
  *
- * These tests import the real module (no esmock) so pure-function behaviour
- * is tested against the real getModelConfig / estimateTokens implementations.
+ * Uses esmock to mock llm-config (which calls readFileSync at load time) so
+ * tests are hermetic and do not depend on llm.json or process.exit side-effects.
  */
 import { describe, it, afterEach } from 'mocha';
 import { expect } from 'chai';
 import sinon from 'sinon';
+import esmock from 'esmock';
 import { AIMessage, HumanMessage, SystemMessage, RemoveMessage } from '@langchain/core/messages';
-import {
-  checkBudgetRouter,
-  summarizeNode,
-  saveNode,
-  agentNode,
-  loadHistoryNode,
-} from '../../src/services/agent.js';
+
+// ---------------------------------------------------------------------------
+// Shared mock llmConfig — mirrors the shape expected by agent.ts
+// ---------------------------------------------------------------------------
+
+const mockLlmConfig = {
+  chat: {
+    primary:  { provider: 'openai',    model: 'gpt-4o',                    temperature: 0.7 },
+    fallback: { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022', temperature: 0.7 },
+  },
+  summarization: {
+    primary:  { provider: 'openai',    model: 'gpt-4o-mini',               temperature: 0.3 },
+    fallback: { provider: 'anthropic', model: 'claude-3-5-haiku-20241022',  temperature: 0.3 },
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Module loader — re-imports node functions with esmocked llm-config
+// ---------------------------------------------------------------------------
+
+async function loadAgentNodes() {
+  const module = await esmock('../../src/services/agent.js', {
+    '../../src/config/llm-config.js': { llmConfig: mockLlmConfig },
+    '../../src/db/queries/conversations.js': {
+      setConversationSystemPrompt: sinon.stub().resolves(),
+      clearConversation: sinon.stub().resolves(),
+    },
+  });
+  return {
+    checkBudgetRouter: module.checkBudgetRouter as (state: any) => 'summarize' | 'save',
+    summarizeNode: module.summarizeNode as (state: any, services: any) => Promise<any>,
+    saveNode: module.saveNode as (state: any, services: any) => Promise<any>,
+    agentNode: module.agentNode as (state: any, services: any) => Promise<any>,
+    loadHistoryNode: module.loadHistoryNode as (state: any, services: any) => Promise<any>,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -24,7 +54,7 @@ import {
 function makeConvService(rowOverrides: Record<string, unknown> = {}) {
   return {
     load: sinon.stub().resolves({
-      id: 1,
+      id: 'uuid-1',
       bot_id: 'bot-1',
       telegram_user_id: 42,
       llm_provider: 'openai',
@@ -34,13 +64,14 @@ function makeConvService(rowOverrides: Record<string, unknown> = {}) {
       messages: [],
       summary: null,
       system_prompt: null,
+      force_summarize: false,
       created_at: new Date(),
       updated_at: new Date(),
       ...rowOverrides,
     }),
     save: sinon.stub().resolves(),
     clearMessages: sinon.stub().resolves(),
-    updateProvider: sinon.stub().resolves(),
+    resetForceSummarize: sinon.stub().resolves(),
   };
 }
 
@@ -62,6 +93,7 @@ function makeState(overrides: Record<string, unknown> = {}) {
     model: 'gpt-4o',
     summarizationProvider: 'openai',
     summarizationModel: 'gpt-4o-mini',
+    forceSummarize: false,
     ...overrides,
   } as any;
 }
@@ -76,9 +108,13 @@ function makeState(overrides: Record<string, unknown> = {}) {
 // At boundary:  totalChars = 409600  → Math.floor(409600/4)=102400 === budget → NOT > → 'save'
 
 describe('checkBudgetRouter', () => {
-  afterEach(() => sinon.restore());
+  afterEach(async () => {
+    sinon.restore();
+    await esmock.purge();
+  });
 
-  it('routes to "save" when total tokens are well under budget', () => {
+  it('routes to "save" when total tokens are well under budget', async () => {
+    const { checkBudgetRouter } = await loadAgentNodes();
     // 10 messages × 100 chars = 1000 chars / 4 = 250 tokens  (budget=102400)
     const content = 'a'.repeat(100);
     const messages = Array.from({ length: 10 }, () => new HumanMessage(content));
@@ -89,7 +125,8 @@ describe('checkBudgetRouter', () => {
     expect(result).to.equal('save');
   });
 
-  it('routes to "summarize" when total tokens are well over budget', () => {
+  it('routes to "summarize" when total tokens are well over budget', async () => {
+    const { checkBudgetRouter } = await loadAgentNodes();
     // 1000 messages × 500 chars = 500000 chars / 4 = 125000 tokens > 102400
     const content = 'b'.repeat(500);
     const messages = Array.from({ length: 1000 }, () => new HumanMessage(content));
@@ -100,7 +137,8 @@ describe('checkBudgetRouter', () => {
     expect(result).to.equal('summarize');
   });
 
-  it('routes to "save" at exact boundary (strict > means equal goes to save)', () => {
+  it('routes to "save" at exact boundary (strict > means equal goes to save)', async () => {
+    const { checkBudgetRouter } = await loadAgentNodes();
     // Exactly budget * 4 = 102400 * 4 = 409600 chars
     // estimateTokens = Math.floor(409600 / 4) = 102400 === budget → NOT > budget → 'save'
     const content = 'c'.repeat(409600);
@@ -112,7 +150,8 @@ describe('checkBudgetRouter', () => {
     expect(result).to.equal('save');
   });
 
-  it('routes to "summarize" when clearly over boundary (one message with content exceeding budget)', () => {
+  it('routes to "summarize" when clearly over boundary (one message with content exceeding budget)', async () => {
+    const { checkBudgetRouter } = await loadAgentNodes();
     // 409601 chars / 4 = 102400.25 → floor = 102400... wait, need strictly over:
     // 409601 chars / 4 = 102400.25 → floor = 102400 which is NOT > 102400
     // Need 409604 chars → floor(409604/4) = 102401 > 102400 → 'summarize'
@@ -125,7 +164,8 @@ describe('checkBudgetRouter', () => {
     expect(result).to.equal('summarize');
   });
 
-  it('falls back to FALLBACK_CONFIG (4096 maxTokens) for unknown model', () => {
+  it('falls back to FALLBACK_CONFIG (4096 maxTokens) for unknown model', async () => {
+    const { checkBudgetRouter } = await loadAgentNodes();
     // Unknown model → budget = Math.floor(4096 * 0.8) = 3276 tokens
     // 1000 messages × 500 chars = 500000 chars / 4 = 125000 tokens >> 3276 → 'summarize'
     const content = 'd'.repeat(500);
@@ -143,10 +183,14 @@ describe('checkBudgetRouter', () => {
 // ===========================================================================
 
 describe('summarizeNode', () => {
-  afterEach(() => sinon.restore());
+  afterEach(async () => {
+    sinon.restore();
+    await esmock.purge();
+  });
 
   // T4: Happy path
   it('returns summary text and RemoveMessage list for oldest half of messages', async () => {
+    const { summarizeNode } = await loadAgentNodes();
     const { stubFactory } = makeModelFactory('This is the summary.');
     const state = makeState({
       messages: [
@@ -169,6 +213,7 @@ describe('summarizeNode', () => {
   });
 
   it('only removes the oldest half of history messages', async () => {
+    const { summarizeNode } = await loadAgentNodes();
     const { stubFactory } = makeModelFactory('summary');
     // 4 messages → oldest half = 2 → removes 2
     const state = makeState({
@@ -190,6 +235,7 @@ describe('summarizeNode', () => {
 
   // T4: Edge case — not enough messages (oldestHalfCount === 0)
   it('returns empty object when there is only 1 message (floor(1/2)=0, nothing to summarize)', async () => {
+    const { summarizeNode } = await loadAgentNodes();
     const { stubFactory } = makeModelFactory('summary');
     const state = makeState({
       messages: [new HumanMessage({ id: 'h1', content: 'only one' })],
@@ -203,6 +249,7 @@ describe('summarizeNode', () => {
   });
 
   it('returns empty object when messages is empty', async () => {
+    const { summarizeNode } = await loadAgentNodes();
     const { stubFactory } = makeModelFactory('summary');
     const state = makeState({
       messages: [],
@@ -217,6 +264,7 @@ describe('summarizeNode', () => {
 
   // T4: Error path — modelFactory.create throws
   it('returns empty object (no throw) when modelFactory.create throws', async () => {
+    const { summarizeNode } = await loadAgentNodes();
     const failFactory = {
       create: sinon.stub().throws(new Error('LLM unavailable')),
     };
@@ -236,6 +284,7 @@ describe('summarizeNode', () => {
 
   // T4: Error path — model.invoke rejects
   it('returns empty object (no throw) when model.invoke rejects', async () => {
+    const { summarizeNode } = await loadAgentNodes();
     const failModel = { invoke: sinon.stub().rejects(new Error('network error')) };
     const failFactory = { create: sinon.stub().returns(failModel) };
     const state = makeState({
@@ -254,6 +303,7 @@ describe('summarizeNode', () => {
 
   // T3: RemoveMessage ID bug — messages without explicit IDs produce no RemoveMessages
   it('produces zero RemoveMessages when messages have no explicit id (DB-loaded messages)', async () => {
+    const { summarizeNode } = await loadAgentNodes();
     // Messages created without explicit id (as toBaseMessages() creates them from DB)
     const { stubFactory } = makeModelFactory('summary');
     const state = makeState({
@@ -278,6 +328,7 @@ describe('summarizeNode', () => {
 
   // SystemMessage and sentinel AIMessage are excluded from history
   it('excludes SystemMessage from history when counting (1 SystemMsg + 1 HumanMsg → 0 to remove)', async () => {
+    const { summarizeNode } = await loadAgentNodes();
     const { stubFactory } = makeModelFactory('summary');
     // 1 SystemMessage + 1 HumanMessage → historyMessages = [HumanMessage] → oldestHalfCount=0 → {}
     const state = makeState({
@@ -301,7 +352,10 @@ describe('summarizeNode', () => {
 // ===========================================================================
 
 describe('saveNode', () => {
-  afterEach(() => sinon.restore());
+  afterEach(async () => {
+    sinon.restore();
+    await esmock.purge();
+  });
 
   function makeSaveState() {
     return makeState({
@@ -318,6 +372,7 @@ describe('saveNode', () => {
   }
 
   it('calls save with the correct botId and userId', async () => {
+    const { saveNode } = await loadAgentNodes();
     const convSvc = makeConvService();
     const state = makeSaveState();
 
@@ -330,6 +385,7 @@ describe('saveNode', () => {
   });
 
   it('does NOT include SystemMessage in the messages passed to save', async () => {
+    const { saveNode } = await loadAgentNodes();
     const convSvc = makeConvService();
     const state = makeSaveState();
 
@@ -341,6 +397,7 @@ describe('saveNode', () => {
   });
 
   it('does NOT include the summary sentinel AIMessage in messages passed to save', async () => {
+    const { saveNode } = await loadAgentNodes();
     const convSvc = makeConvService();
     const state = makeSaveState();
 
@@ -352,6 +409,7 @@ describe('saveNode', () => {
   });
 
   it('DOES include the user HumanMessage in messages passed to save', async () => {
+    const { saveNode } = await loadAgentNodes();
     const convSvc = makeConvService();
     const state = makeSaveState();
 
@@ -363,6 +421,7 @@ describe('saveNode', () => {
   });
 
   it('DOES include the assistant AIMessage in messages passed to save', async () => {
+    const { saveNode } = await loadAgentNodes();
     const convSvc = makeConvService();
     const state = makeSaveState();
 
@@ -374,6 +433,7 @@ describe('saveNode', () => {
   });
 
   it('passes state.summary as the fourth argument to save', async () => {
+    const { saveNode } = await loadAgentNodes();
     const convSvc = makeConvService();
     const state = makeSaveState(); // summary: 'current summary'
 
@@ -384,6 +444,7 @@ describe('saveNode', () => {
   });
 
   it('passes null to save when summary is empty string', async () => {
+    const { saveNode } = await loadAgentNodes();
     const convSvc = makeConvService();
     const state = makeState({
       messages: [new HumanMessage('hi'), new AIMessage('hello')],
@@ -399,6 +460,7 @@ describe('saveNode', () => {
   });
 
   it('returns empty object', async () => {
+    const { saveNode } = await loadAgentNodes();
     const convSvc = makeConvService();
     const state = makeSaveState();
 
@@ -413,9 +475,13 @@ describe('saveNode', () => {
 // ===========================================================================
 
 describe('agentNode', () => {
-  afterEach(() => sinon.restore());
+  afterEach(async () => {
+    sinon.restore();
+    await esmock.purge();
+  });
 
   it('returns object with messages array containing the AI reply', async () => {
+    const { agentNode } = await loadAgentNodes();
     const { stubFactory } = makeModelFactory('LLM reply');
     const state = makeState({
       messages: [new HumanMessage('hello')],
@@ -433,6 +499,7 @@ describe('agentNode', () => {
   });
 
   it('calls modelFactory.create with the provider and model from state', async () => {
+    const { agentNode } = await loadAgentNodes();
     const { stubFactory } = makeModelFactory('reply');
     const state = makeState({
       messages: [new HumanMessage('test')],
@@ -446,6 +513,7 @@ describe('agentNode', () => {
   });
 
   it('calls model.invoke with the full state.messages array', async () => {
+    const { agentNode } = await loadAgentNodes();
     const { stubModel, stubFactory } = makeModelFactory('reply');
     const inputMessages = [
       new SystemMessage('be helpful'),
@@ -466,9 +534,13 @@ describe('agentNode', () => {
 // ===========================================================================
 
 describe('loadHistoryNode', () => {
-  afterEach(() => sinon.restore());
+  afterEach(async () => {
+    sinon.restore();
+    await esmock.purge();
+  });
 
   it('uses system_prompt from DB row as first SystemMessage when no override', async () => {
+    const { loadHistoryNode } = await loadAgentNodes();
     const convSvc = makeConvService({ system_prompt: 'sys from db', summary: null });
     const state = makeState({ userInput: 'hi', systemPromptOverride: undefined });
 
@@ -480,6 +552,7 @@ describe('loadHistoryNode', () => {
   });
 
   it('uses systemPromptOverride instead of row.system_prompt when override provided', async () => {
+    const { loadHistoryNode } = await loadAgentNodes();
     const convSvc = makeConvService({ system_prompt: 'original', summary: null });
     const state = makeState({ userInput: 'hi', systemPromptOverride: 'override prompt' });
 
@@ -491,6 +564,7 @@ describe('loadHistoryNode', () => {
   });
 
   it('injects summary AIMessage when row.summary is non-empty', async () => {
+    const { loadHistoryNode } = await loadAgentNodes();
     const convSvc = makeConvService({ system_prompt: null, summary: 'some summary' });
     const state = makeState({ userInput: 'hi', systemPromptOverride: undefined });
 
@@ -502,6 +576,7 @@ describe('loadHistoryNode', () => {
   });
 
   it('does NOT inject summary AIMessage when row.summary is null', async () => {
+    const { loadHistoryNode } = await loadAgentNodes();
     const convSvc = makeConvService({ system_prompt: null, summary: null });
     const state = makeState({ userInput: 'hi' });
 
@@ -513,6 +588,7 @@ describe('loadHistoryNode', () => {
   });
 
   it('does NOT inject summary AIMessage when row.summary is empty string', async () => {
+    const { loadHistoryNode } = await loadAgentNodes();
     const convSvc = makeConvService({ system_prompt: null, summary: '' });
     const state = makeState({ userInput: 'hi' });
 
@@ -524,6 +600,7 @@ describe('loadHistoryNode', () => {
   });
 
   it('appends state.userInput as the LAST HumanMessage in returned messages', async () => {
+    const { loadHistoryNode } = await loadAgentNodes();
     const convSvc = makeConvService({
       system_prompt: null,
       summary: null,
@@ -540,6 +617,7 @@ describe('loadHistoryNode', () => {
   });
 
   it('returns [HumanMessage(userInput)] when row.messages is empty and no system/summary', async () => {
+    const { loadHistoryNode } = await loadAgentNodes();
     const convSvc = makeConvService({ system_prompt: null, summary: null, messages: [] });
     const state = makeState({ userInput: 'only message' });
 
@@ -552,6 +630,7 @@ describe('loadHistoryNode', () => {
   });
 
   it('places [SystemMessage, HumanMessage(userInput)] when system_prompt set and no history', async () => {
+    const { loadHistoryNode } = await loadAgentNodes();
     const convSvc = makeConvService({ system_prompt: 'be helpful', summary: null, messages: [] });
     const state = makeState({ userInput: 'hello' });
 
@@ -564,12 +643,14 @@ describe('loadHistoryNode', () => {
     expect(msgs[1].content).to.equal('hello');
   });
 
-  it('returns provider and model fields from the DB row', async () => {
+  it('returns provider and model fields from mockLlmConfig (not DB row)', async () => {
+    const { loadHistoryNode } = await loadAgentNodes();
     const convSvc = makeConvService({
+      // DB row has stale/different values — llmConfig should take precedence
       llm_provider: 'anthropic',
       llm_model: 'claude-3-5-sonnet-20241022',
-      summarization_provider: 'openai',
-      summarization_model: 'gpt-4o-mini',
+      summarization_provider: 'anthropic',
+      summarization_model: 'claude-3-5-haiku-20241022',
       system_prompt: null,
       summary: null,
     });
@@ -577,9 +658,10 @@ describe('loadHistoryNode', () => {
 
     const result = await loadHistoryNode(state, { conversationService: convSvc as any });
 
-    expect(result.provider).to.equal('anthropic');
-    expect(result.model).to.equal('claude-3-5-sonnet-20241022');
-    expect(result.summarizationProvider).to.equal('openai');
-    expect(result.summarizationModel).to.equal('gpt-4o-mini');
+    // Values come from mockLlmConfig, not the DB row
+    expect(result.provider).to.equal(mockLlmConfig.chat.primary.provider);
+    expect(result.model).to.equal(mockLlmConfig.chat.primary.model);
+    expect(result.summarizationProvider).to.equal(mockLlmConfig.summarization.primary.provider);
+    expect(result.summarizationModel).to.equal(mockLlmConfig.summarization.primary.model);
   });
 });

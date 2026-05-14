@@ -1,0 +1,10 @@
+{
+  "chat": {
+    "primary":  { "provider": "openai",    "model": "gpt-4o",                    "temperature": 0.7 },
+    "fallback": { "provider": "anthropic", "model": "claude-3-5-sonnet-20241022", "temperature": 0.7 }
+  },
+  "summarization": {
+    "primary":  { "provider": "openai",    "model": "gpt-4o-mini",               "temperature": 0.3 },
+    "fallback": { "provider": "anthropic", "model": "claude-3-5-haiku-20241022",  "temperature": 0.3 }
+  }
+}

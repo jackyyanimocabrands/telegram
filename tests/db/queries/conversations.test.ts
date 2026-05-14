@@ -6,9 +6,9 @@ import {
   getConversation,
   upsertConversation,
   updateConversationMessages,
-  updateConversationProvider,
   clearConversation,
   setConversationSystemPrompt,
+  resetForceSummarize,
 } from '../../../src/db/queries/conversations.js';
 
 // Minimal fixture — mirrors the full ConversationRow shape
@@ -95,7 +95,7 @@ describe('conversations queries', () => {
   // ── upsertConversation ───────────────────────────────────────────────────
 
   describe('upsertConversation', () => {
-    const defaults = {
+    const initialMetadata = {
       llmProvider: 'openai',
       llmModel: 'gpt-4o',
       summarizationProvider: 'openai',
@@ -106,7 +106,7 @@ describe('conversations queries', () => {
       const row = makeRow();
       // upsertConversation now issues ONE query: INSERT ... ON CONFLICT DO UPDATE RETURNING *
       queryStub.resolves({ rows: [row], rowCount: 1 });
-      await upsertConversation('bot123', 99, defaults);
+      await upsertConversation('bot123', 99, initialMetadata);
       expect(queryStub.calledOnce).to.be.true;
       const [sql, params] = queryStub.firstCall.args as [string, unknown[]];
       expect(sql).to.include('ON CONFLICT');
@@ -122,7 +122,7 @@ describe('conversations queries', () => {
       const row = makeRow();
       // Single query: INSERT ... ON CONFLICT DO UPDATE SET updated_at = updated_at RETURNING *
       queryStub.resolves({ rows: [row], rowCount: 1 });
-      const result = await upsertConversation('bot123', 99, defaults);
+      const result = await upsertConversation('bot123', 99, initialMetadata);
       expect(result).to.deep.equal(row);
     });
   });
@@ -146,6 +146,34 @@ describe('conversations queries', () => {
       const [, params] = queryStub.firstCall.args as [string, unknown[]];
       expect(params[0]).to.equal('[]');
       expect(params[1]).to.be.null;
+    });
+
+    it('includes llm_provider and summarization_model in SQL when lastUsed is provided', async () => {
+      queryStub.resolves({ rows: [] });
+      const messages = [{ role: 'user', content: 'hi' }];
+      const lastUsed = {
+        provider: 'anthropic',
+        model: 'claude-3-5-sonnet-20241022',
+        summarizationProvider: 'openai',
+        summarizationModel: 'gpt-4o-mini',
+      };
+      await updateConversationMessages('bot123', 99, messages, null, lastUsed);
+      const [sql, params] = queryStub.firstCall.args as [string, unknown[]];
+      expect(sql).to.include('llm_provider');
+      expect(sql).to.include('summarization_model');
+      // params: [messages, summary, provider, model, summarizationProvider, summarizationModel, botId, telegramUserId]
+      expect(params).to.include('anthropic');
+      expect(params).to.include('claude-3-5-sonnet-20241022');
+      expect(params).to.include('openai');
+      expect(params).to.include('gpt-4o-mini');
+      // positional: provider at index 2, model at 3, summarizationProvider at 4, summarizationModel at 5
+      expect(params[2]).to.equal('anthropic');
+      expect(params[3]).to.equal('claude-3-5-sonnet-20241022');
+      expect(params[4]).to.equal('openai');
+      expect(params[5]).to.equal('gpt-4o-mini');
+      // botId and telegramUserId come after
+      expect(params[6]).to.equal('bot123');
+      expect(params[7]).to.equal(99);
     });
   });
 
@@ -196,20 +224,15 @@ describe('conversations queries', () => {
     });
   });
 
-  // ── updateConversationProvider ───────────────────────────────────────────
+  // ── resetForceSummarize ──────────────────────────────────────────────────
 
-  describe('updateConversationProvider', () => {
-    it('updates llm_provider, llm_model, and updated_at', async () => {
+  describe('resetForceSummarize', () => {
+    it('sets force_summarize = FALSE for the given botId and userId', async () => {
       queryStub.resolves({ rows: [] });
-      await updateConversationProvider('bot123', 99, 'anthropic', 'claude-3-5-sonnet-20241022');
+      await resetForceSummarize('bot123', 99);
       const [sql, params] = queryStub.firstCall.args as [string, unknown[]];
-      expect(sql).to.include('llm_provider');
-      expect(sql).to.include('llm_model');
-      expect(sql).to.include('updated_at');
-      expect(params).to.include('anthropic');
-      expect(params).to.include('claude-3-5-sonnet-20241022');
-      expect(params).to.include('bot123');
-      expect(params).to.include(99);
+      expect(sql).to.include('force_summarize = FALSE');
+      expect(params).to.deep.equal(['bot123', 99]);
     });
   });
 });

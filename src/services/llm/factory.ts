@@ -6,7 +6,7 @@ import { ChatOpenAI as ChatOpenRouter } from '@langchain/openai';
 import { env } from '../../config/env.js';
 
 export interface ILlmProviderFactory {
-  create(provider: string, model: string): Pick<BaseChatModel, 'invoke' | 'stream'>;
+  create(provider: string, model: string, temperature?: number): Pick<BaseChatModel, 'invoke' | 'stream'>;
 }
 
 // Injectable constructors for test isolation
@@ -47,8 +47,8 @@ export class LlmProviderFactory implements ILlmProviderFactory {
     };
   }
 
-  create(provider: string, model: string): Pick<BaseChatModel, 'invoke' | 'stream'> {
-    const cacheKey = `${provider}\0${model}`;
+  create(provider: string, model: string, temperature?: number): Pick<BaseChatModel, 'invoke' | 'stream'> {
+    const cacheKey = `${provider}\0${model}\0${temperature ?? 'default'}`;
     const cached = this.cache.get(cacheKey);
     if (cached) return cached;
 
@@ -57,17 +57,17 @@ export class LlmProviderFactory implements ILlmProviderFactory {
     switch (provider) {
       case 'openai':
         if (!this.keys.openai) throw new Error('OpenAI API key is not configured');
-        instance = new this.ctors.ChatOpenAI({ apiKey: this.keys.openai, model });
+        instance = new this.ctors.ChatOpenAI({ apiKey: this.keys.openai, model, ...(temperature !== undefined && { temperature }) });
         break;
 
       case 'anthropic':
         if (!this.keys.anthropic) throw new Error('Anthropic API key is not configured');
-        instance = new this.ctors.ChatAnthropic({ apiKey: this.keys.anthropic, model });
+        instance = new this.ctors.ChatAnthropic({ apiKey: this.keys.anthropic, model, ...(temperature !== undefined && { temperature }) });
         break;
 
       case 'deepseek':
         if (!this.keys.deepseek) throw new Error('DeepSeek API key is not configured');
-        instance = new this.ctors.ChatDeepSeek({ apiKey: this.keys.deepseek, model });
+        instance = new this.ctors.ChatDeepSeek({ apiKey: this.keys.deepseek, model, ...(temperature !== undefined && { temperature }) });
         break;
 
       case 'openrouter':
@@ -76,6 +76,7 @@ export class LlmProviderFactory implements ILlmProviderFactory {
           apiKey: this.keys.openrouter,
           model,
           configuration: { baseURL: 'https://openrouter.ai/api/v1' },
+          ...(temperature !== undefined && { temperature }),
         });
         break;
 
