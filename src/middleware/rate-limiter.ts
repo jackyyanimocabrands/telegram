@@ -1,4 +1,5 @@
 import rateLimit from 'express-rate-limit';
+import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import type { Request, Response } from 'express';
 
@@ -41,10 +42,10 @@ export const webhookLimiter = rateLimit({
 // TODO: For multi-process deployments, replace MemoryStore with a Redis-backed store
 // (e.g. rate-limit-redis) to enforce limits across all instances.
 export const adminLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 15,                    // 15 req / 15 min per IP — strict for admin
+  windowMs: env.ADMIN_RATE_LIMIT_WINDOW_MS,
+  max:       env.ADMIN_RATE_LIMIT_MAX,
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders:   false,
   message: { error: 'Too many requests' },
   handler: (req: Request, res: Response) => {
     logger.warn({ ip: req.ip, path: req.path }, 'Rate limit hit: admin');

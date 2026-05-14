@@ -51,6 +51,8 @@ const envSchema = z.object({
   JOB_RETENTION_HOURS: z.coerce.number().int().min(0).default(24),
   LOCK_TTL_SECS: z.coerce.number().int().min(10).default(60),
   ADMIN_API_KEY: z.string().min(32),
+  ADMIN_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000), // 15 min
+  ADMIN_RATE_LIMIT_MAX:       z.coerce.number().int().positive().default(15),
 });
 
 export type Env = z.infer<typeof envSchema>;
