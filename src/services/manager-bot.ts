@@ -239,6 +239,7 @@ export async function processManagerMessage(
         lastSentAt = now;
       }
     }
+    logger.debug({ chatId, mes : toTelegramMarkdownV2(accumulated) },  'processManagerMessage: stream ended');
     // const parts = splitAtSentenceBoundary(accumulated);
     // for (const part of parts) {
       await telegram.sendMessage(managerBotToken, chatId, toTelegramMarkdownV2(accumulated), { parse_mode: 'MarkdownV2' });
