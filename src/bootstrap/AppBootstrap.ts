@@ -18,7 +18,8 @@ import { HttpTelegramClient } from '../services/telegram-api.js';
 import * as managedBotQueries from '../db/queries/managed-bots.js';
 import { enqueueManagerMessage } from '../services/manager-bot.js';
 import { managerQueue } from '../queues/manager-queue.js';
-import { verifyEmailRouter } from '../routes/verify-email.js';
+import { getEmailVerificationQueue } from '../queues/email-verification-queue.js';
+import { createVerifyEmailRouter } from '../routes/verify-email.js';
 
 export class AppBootstrap {
   private app: express.Application;
@@ -108,8 +109,11 @@ export class AppBootstrap {
       // Health check — registered BEFORE rate limiters; must always be reachable.
       this.app.use(healthRouter);
 
+      // BLOCKER 17: eagerly init email verification queue at startup to warm the Redis connection
+      getEmailVerificationQueue();
+
       // Public routes — mounted BEFORE auth middleware
-      this.app.use('/verify-email', verifyEmailLimiter, verifyEmailRouter);
+      this.app.use('/verify-email', verifyEmailLimiter, createVerifyEmailRouter());
 
       // Start the registry (wires all transports)
       await this.registry.start();
@@ -154,6 +158,10 @@ export class AppBootstrap {
     }
     await managerQueue.close().catch((err) => {
       logger.error({ err }, 'Error closing BullMQ queues');
+    });
+    // BLOCKER 4: close email verification queue on shutdown
+    await getEmailVerificationQueue().close().catch((err) => {
+      logger.error({ err }, 'Error closing email verification queue');
     });
     await new Promise<void>((resolve) => {
       if (!this.server) { resolve(); return; }

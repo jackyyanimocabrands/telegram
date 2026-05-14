@@ -47,6 +47,7 @@ const envSchema = z.object({
   REDIS_URL: z.string().default('redis://localhost:6379'),
   MANAGER_THROTTLE_MS: z.coerce.number().int().min(0).default(5000),
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).default(4),
+  EMAIL_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(10),
   JOB_RETENTION_HOURS: z.coerce.number().int().min(0).default(24),
   LOCK_TTL_SECS: z.coerce.number().int().min(10).default(60),
   ADMIN_API_KEY: z.string().min(32),
@@ -62,7 +63,8 @@ const envSchema = z.object({
   // Email verification
   SES_REGION: z.string().default('us-east-1'),
   SES_FROM_ADDRESS: z.string().email().optional(),
-  EMAIL_VERIFICATION_TOKEN_TTL_SECS: z.coerce.number().int().positive().default(86400), // 24h
+  EMAIL_VERIFICATION_TOKEN_TTL_SECS: z.coerce.number().int().positive().default(1800), // 30 min
+  EMAIL_VERIFICATION_RENEW_THRESHOLD_SECS: z.coerce.number().int().positive().default(300), // 5 min
 });
 
 export type Env = z.infer<typeof envSchema>;

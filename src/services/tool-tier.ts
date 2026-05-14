@@ -1,10 +1,13 @@
 import type { StructuredTool } from '@langchain/core/tools';
 import type { Redis } from 'ioredis';
+import type { Pool } from 'pg';
 import {
   createCreateBotTool,
   createConfigureBotTool,
   createWebsearchTool,
   createWebfetchTool,
+  createVerifyEmailTool,
+  createClearEmailVerificationTool,
 } from './tools/index.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -30,6 +33,7 @@ export interface ToolDeps {
   botId: string;
   userId: string;
   redisClient?: Redis;
+  pool?: Pool;
 }
 
 // ── Resolver ─────────────────────────────────────────────────────────────────
@@ -47,8 +51,8 @@ export function resolveToolTier(toolsetState: ToolsetState): ToolTier {
 /**
  * Returns the tools available for the given tier.
  *
- * base          → [webfetch, websearch]
- * authenticated → [createBot, configureBot, webfetch, websearch]
+ * base          → [verify_email, web_fetch, web_search]
+ * authenticated → [clear_email_verification, create_bot, configure_bot, web_fetch, web_search]
  */
 export function getToolsForTier(tier: ToolTier, deps: ToolDeps): StructuredTool[] {
   const sharedTools = [
@@ -57,11 +61,15 @@ export function getToolsForTier(tier: ToolTier, deps: ToolDeps): StructuredTool[
   ];
 
   if (tier === 'base') {
-    return sharedTools;
+    return [
+      createVerifyEmailTool(deps.botId, deps.userId),
+      ...sharedTools,
+    ];
   }
 
   // authenticated
   return [
+    createClearEmailVerificationTool(deps.botId, deps.userId, deps.pool),
     createCreateBotTool(deps.userEmail),
     createConfigureBotTool(deps.userEmail),
     ...sharedTools,

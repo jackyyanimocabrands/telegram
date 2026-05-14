@@ -8,16 +8,18 @@ import { env } from '../../src/config/env.js';
 const APP_ISSUER = 'hellominds-telegram-connector';
 
 describe('email-verification service', () => {
-  let signVerificationToken: (email: string, botId: string, userId: string) => string;
+  let signVerificationToken: (email: string, botId: string, userId: string) => Promise<{ token: string; jti: string; expiresAt: Date }>;
   let verifyVerificationToken: (token: string) => { email: string; botId: string; userId: string };
   let sendVerificationEmail: (email: string, botId: string, userId: string) => Promise<void>;
 
   let sendStub: sinon.SinonStub;
   let sesClientStub: { send: sinon.SinonStub };
+  let insertTokenStub: sinon.SinonStub;
 
   beforeEach(async () => {
     sendStub = sinon.stub().resolves({ MessageId: 'test-message-id' });
     sesClientStub = { send: sendStub };
+    insertTokenStub = sinon.stub().resolves();
 
     const mod = await esmock('../../src/services/email-verification.ts', {
       '@aws-sdk/client-ses': {
@@ -27,6 +29,9 @@ describe('email-verification service', () => {
         SendEmailCommand: class {
           constructor(public input: unknown) {}
         },
+      },
+      '../../src/db/queries/email-verification-tokens.js': {
+        insertToken: insertTokenStub,
       },
     });
 
@@ -43,14 +48,14 @@ describe('email-verification service', () => {
   // ── signVerificationToken ────────────────────────────────────────────────
 
   describe('signVerificationToken', () => {
-    it('returns a string JWT with three dot-separated parts', () => {
-      const token = signVerificationToken('test@example.com', 'bot-123', 'user-456');
+    it('returns a string JWT with three dot-separated parts', async () => {
+      const { token } = await signVerificationToken('test@example.com', 'bot-123', 'user-456');
       expect(token).to.be.a('string');
       expect(token.split('.')).to.have.length(3);
     });
 
-    it('encodes email, botId, userId, and purpose claims', () => {
-      const token = signVerificationToken('foo@bar.com', 'botA', 'userB');
+    it('encodes email, botId, userId, and purpose claims', async () => {
+      const { token } = await signVerificationToken('foo@bar.com', 'botA', 'userB');
       const decoded = jwt.verify(token, env.ES256_PUBLIC_KEY, {
         algorithms: ['ES256'],
         issuer: APP_ISSUER,
@@ -61,13 +66,28 @@ describe('email-verification service', () => {
       expect(decoded.userId).to.equal('userB');
       expect(decoded.purpose).to.equal('email-verification');
     });
+
+    it('calls insertToken with correct args (jti, email, botId, userId, expiresAt)', async () => {
+      const email = 'insert@example.com';
+      const botId = 'bot-insert';
+      const userId = '54321';
+      const { jti, expiresAt } = await signVerificationToken(email, botId, userId);
+
+      expect(insertTokenStub.calledOnce).to.be.true;
+      const [calledJti, calledEmail, calledBotId, calledUserId, calledExpiresAt] = insertTokenStub.firstCall.args;
+      expect(calledJti).to.equal(jti);
+      expect(calledEmail).to.equal(email);
+      expect(calledBotId).to.equal(botId);
+      expect(calledUserId).to.equal(Number(userId));
+      expect(calledExpiresAt).to.deep.equal(expiresAt);
+    });
   });
 
   // ── verifyVerificationToken ──────────────────────────────────────────────
 
   describe('verifyVerificationToken', () => {
-    it('round-trips correctly — returns email, botId, userId', () => {
-      const token = signVerificationToken('hello@example.com', 'bot-1', 'user-1');
+    it('round-trips correctly — returns email, botId, userId', async () => {
+      const { token } = await signVerificationToken('hello@example.com', 'bot-1', 'user-1');
       const payload = verifyVerificationToken(token);
       expect(payload.email).to.equal('hello@example.com');
       expect(payload.botId).to.equal('bot-1');
@@ -171,6 +191,9 @@ describe('email-verification service', () => {
         '../../src/config/env.js': {
           env: { ...env, SES_FROM_ADDRESS: undefined },
         },
+        '../../src/db/queries/email-verification-tokens.js': {
+          insertToken: insertTokenStub,
+        },
       });
       let threw = false;
       try {
@@ -183,3 +206,4 @@ describe('email-verification service', () => {
     });
   });
 });
+

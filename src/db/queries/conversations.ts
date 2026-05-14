@@ -1,4 +1,4 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { pool as defaultPool } from '../client.js';
 import { logger } from '../../utils/logger.js';
 import type { ConversationMessage } from '../../types/conversation.js';
@@ -24,6 +24,9 @@ export interface ConversationRow {
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
+
+/** Union type accepted by query helpers — both Pool and PoolClient expose .query() */
+type Queryable = Pool | PoolClient;
 
 /**
  * pg's JSONB decoder already returns a parsed JS value for JSONB columns,
@@ -179,7 +182,7 @@ export async function updateToolsetState(
   botId: string,
   telegramUserId: number,
   patch: Record<string, unknown>,
-  pool: Pool = defaultPool,
+  pool: Queryable = defaultPool,
 ): Promise<number> {
   logger.debug({ botId, telegramUserId }, 'updateToolsetState');
   const result = await pool.query(
