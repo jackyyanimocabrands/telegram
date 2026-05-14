@@ -16,14 +16,14 @@ import { AIMessage, HumanMessage, SystemMessage, RemoveMessage } from '@langchai
 // ---------------------------------------------------------------------------
 
 const mockLlmConfig = {
-  chat: {
-    primary:  { provider: 'openai',    model: 'gpt-4o',                    temperature: 0.7 },
-    fallback: { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022', temperature: 0.7 },
-  },
-  summarization: {
-    primary:  { provider: 'openai',    model: 'gpt-4o-mini',               temperature: 0.3 },
-    fallback: { provider: 'anthropic', model: 'claude-3-5-haiku-20241022',  temperature: 0.3 },
-  },
+  chat: [
+    { provider: 'openai',    model: 'gpt-4o',                    temperature: 0.7 },
+    { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022', temperature: 0.7 },
+  ],
+  summarization: [
+    { provider: 'openai',    model: 'gpt-4o-mini',               temperature: 0.3 },
+    { provider: 'anthropic', model: 'claude-3-5-haiku-20241022',  temperature: 0.3 },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -498,7 +498,7 @@ describe('agentNode', () => {
     expect(msgs[0].content).to.equal('LLM reply');
   });
 
-  it('calls modelFactory.create with the provider and model from state', async () => {
+  it('calls modelFactory.create with provider and model from the first llmConfig.chat slot', async () => {
     const { agentNode } = await loadAgentNodes();
     const { stubFactory } = makeModelFactory('reply');
     const state = makeState({
@@ -509,7 +509,8 @@ describe('agentNode', () => {
 
     await agentNode(state, { modelFactory: stubFactory });
 
-    expect(stubFactory.create.calledOnceWith('anthropic', 'claude-3-5-sonnet-20241022')).to.be.true;
+    // New loop-based agentNode uses llmConfig.chat[0] (openai/gpt-4o), not state values
+    expect(stubFactory.create.calledOnceWith('openai', 'gpt-4o')).to.be.true;
   });
 
   it('calls model.invoke with the full state.messages array', async () => {
@@ -659,9 +660,9 @@ describe('loadHistoryNode', () => {
     const result = await loadHistoryNode(state, { conversationService: convSvc as any });
 
     // Values come from mockLlmConfig, not the DB row
-    expect(result.provider).to.equal(mockLlmConfig.chat.primary.provider);
-    expect(result.model).to.equal(mockLlmConfig.chat.primary.model);
-    expect(result.summarizationProvider).to.equal(mockLlmConfig.summarization.primary.provider);
-    expect(result.summarizationModel).to.equal(mockLlmConfig.summarization.primary.model);
+    expect(result.provider).to.equal(mockLlmConfig.chat[0]!.provider);
+    expect(result.model).to.equal(mockLlmConfig.chat[0]!.model);
+    expect(result.summarizationProvider).to.equal(mockLlmConfig.summarization[0]!.provider);
+    expect(result.summarizationModel).to.equal(mockLlmConfig.summarization[0]!.model);
   });
 });

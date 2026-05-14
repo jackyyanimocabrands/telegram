@@ -28,12 +28,12 @@ function makeRow(overrides: Partial<ConversationRow> = {}): ConversationRow {
 }
 
 const mockLlmConfig = {
-  chat: {
-    primary: { provider: 'openai', model: 'gpt-4o', temperature: 0.7 },
-  },
-  summarization: {
-    primary: { provider: 'openai', model: 'gpt-4o-mini', temperature: 0.7 },
-  },
+  chat: [
+    { provider: 'openai', model: 'gpt-4o', temperature: 0.7 },
+  ],
+  summarization: [
+    { provider: 'openai', model: 'gpt-4o-mini', temperature: 0.7 },
+  ],
 };
 
 // ---------------------------------------------------------------------------

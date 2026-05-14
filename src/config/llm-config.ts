@@ -17,26 +17,14 @@ export const LlmSlotSchema = z.object({
 export type LlmSlotConfig = z.infer<typeof LlmSlotSchema>;
 
 export const LlmConfigSchema = z.object({
-  chat: z.object({
-    primary: LlmSlotSchema,
-    fallback: LlmSlotSchema.optional(),
-  }),
-  summarization: z.object({
-    primary: LlmSlotSchema,
-    fallback: LlmSlotSchema.optional(),
-  }),
+  chat: z.array(LlmSlotSchema).min(1, 'At least one chat LLM slot is required'),
+  summarization: z.array(LlmSlotSchema).min(1, 'At least one summarization LLM slot is required'),
 });
 export type LlmConfig = z.infer<typeof LlmConfigSchema>;
 
 /** Exported for unit testing — validates that all providers referenced in config have API keys in env */
 export function validateApiKeys(config: LlmConfig, apiKeys: Record<string, string | undefined>): void {
-  const slots = [
-    config.chat.primary,
-    config.chat.fallback,
-    config.summarization.primary,
-    config.summarization.fallback,
-  ].filter((s): s is LlmSlotConfig => s !== undefined);
-
+  const slots = [...config.chat, ...config.summarization];
   const seen = new Set<string>();
   for (const slot of slots) {
     if (seen.has(slot.provider)) continue;

@@ -19,10 +19,10 @@ export class ConversationService {
     logger.debug({ botId, telegramUserId }, 'ConversationService.load');
     // Only written on INSERT — not used for LLM selection; selection is driven by llmConfig
     const initialMetadata = {
-      llmProvider: llmConfig.chat.primary.provider,
-      llmModel: llmConfig.chat.primary.model,
-      summarizationProvider: llmConfig.summarization.primary.provider,
-      summarizationModel: llmConfig.summarization.primary.model,
+      llmProvider: llmConfig.chat[0]!.provider,
+      llmModel: llmConfig.chat[0]!.model,
+      summarizationProvider: llmConfig.summarization[0]!.provider,
+      summarizationModel: llmConfig.summarization[0]!.model,
     };
     return upsertConversation(botId, telegramUserId, initialMetadata);
   }

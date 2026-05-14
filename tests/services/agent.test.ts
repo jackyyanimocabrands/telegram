@@ -59,12 +59,14 @@ function makeModelFactory(reply = 'test reply') {
 // ---------------------------------------------------------------------------
 
 const mockLlmConfig = {
-  chat: {
-    primary: { provider: 'openai', model: 'gpt-4o', temperature: 0.7 },
-  },
-  summarization: {
-    primary: { provider: 'openai', model: 'gpt-4o-mini', temperature: 0.7 },
-  },
+  chat: [
+    { provider: 'openai', model: 'gpt-4o', temperature: 0.7 },
+    { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022', temperature: 0.7 },
+  ],
+  summarization: [
+    { provider: 'openai', model: 'gpt-4o-mini', temperature: 0.3 },
+    { provider: 'anthropic', model: 'claude-3-5-haiku-20241022', temperature: 0.3 },
+  ],
 };
 
 let setConversationSystemPromptStub: sinon.SinonStub;
@@ -220,7 +222,7 @@ describe('AgentService (LangGraph)', () => {
       const svc = new AgentService(convSvc, stubFactory);
       await svc.chat('bot-1', 42, 'hello');
 
-      // mockLlmConfig.chat.primary = openai / gpt-4o
+      // mockLlmConfig.chat[0] = openai / gpt-4o
       expect(stubFactory.create.calledWith('openai', 'gpt-4o')).to.be.true;
     });
   });
@@ -283,7 +285,7 @@ describe('AgentService (LangGraph)', () => {
       const svc = new AgentService(convSvc, stubFactory);
       await svc.generateWarmPrompt('manager-bot', 99);
 
-      // mockLlmConfig summarization.primary = openai / gpt-4o-mini
+      // mockLlmConfig summarization[0] = openai / gpt-4o-mini
       expect(stubFactory.create.calledWith('openai', 'gpt-4o-mini')).to.be.true;
     });
 
@@ -341,7 +343,7 @@ describe('AgentService (LangGraph)', () => {
     it('save is called even after summarization runs (graph completes)', async () => {
       const AgentService = await buildAgentService();
 
-      // Budget: mockLlmConfig chat.primary.model = 'gpt-4o' → maxTokens=128000, budget=102400.
+      // Budget: mockLlmConfig chat[0].model = 'gpt-4o' → maxTokens=128000, budget=102400.
       // Need > 409600 chars: 410 messages × 1000 chars = 410000 chars → 102500 tokens > 102400.
       const longContent = 'x'.repeat(1000);
       const manyMessages = Array.from({ length: 410 }, (_, i) => ({
@@ -367,7 +369,7 @@ describe('AgentService (LangGraph)', () => {
       const AgentService = await buildAgentService();
 
       // Budget math (checkBudgetRouter uses maxTokens * 0.8, estimateTokens = floor(chars/4)):
-      //   mockLlmConfig → chat.primary.model = 'gpt-4o', maxTokens=128000, budget=102400
+      //   mockLlmConfig → chat[0].model = 'gpt-4o', maxTokens=128000, budget=102400
       //   To trigger summarize: need totalTokens > 102400 → need > 409600 chars total.
       //   410 messages × 1000 chars = 410000 chars → 102500 tokens > 102400 ✓
       const longContent = 'y'.repeat(1000);

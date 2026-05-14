@@ -155,10 +155,10 @@ export async function loadHistoryNode(
   return {
     messages: builtMessages,
     // Provider/model sourced from llmConfig, not DB
-    provider: llmConfig.chat.primary.provider,
-    model: llmConfig.chat.primary.model,
-    summarizationProvider: llmConfig.summarization.primary.provider,
-    summarizationModel: llmConfig.summarization.primary.model,
+    provider: llmConfig.chat[0]!.provider,
+    model: llmConfig.chat[0]!.model,
+    summarizationProvider: llmConfig.summarization[0]!.provider,
+    summarizationModel: llmConfig.summarization[0]!.model,
     summary: row.summary ?? '',
     forceSummarize: row.force_summarize,
   };
@@ -177,40 +177,42 @@ export async function agentNode(
   services: { modelFactory: ILlmModelFactory },
 ): Promise<Partial<AgentState>> {
   const { modelFactory } = services;
-
   logger.debug(
-    { provider: state.provider, model: state.model, messageCount: state.messages.length },
+    { messageCount: state.messages.length, slotCount: llmConfig.chat.length },
     'agentNode: invoking LLM',
   );
 
-  let aiMessage: AIMessage;
-  const primaryTemperature = llmConfig.chat.primary.temperature;
-  const primaryModel = modelFactory.create(state.provider, state.model, primaryTemperature);
-
-  try {
-    aiMessage = await primaryModel.invoke(state.messages) as AIMessage;
-  } catch (primaryErr) {
-    const fallback = llmConfig.chat.fallback;
-    if (!fallback) {
-      logger.error({ err: sanitizeLlmError(primaryErr), provider: state.provider, model: state.model }, 'agentNode: primary LLM failed, no fallback configured');
-      throw primaryErr;
+  let lastErr: unknown;
+  for (let i = 0; i < llmConfig.chat.length; i++) {
+    const slot = llmConfig.chat[i]!;
+    try {
+      const model = modelFactory.create(slot.provider, slot.model, slot.temperature);
+      const aiMessage = await model.invoke(state.messages) as AIMessage;
+      logger.debug(
+        { provider: slot.provider, model: slot.model, attemptIndex: i, contentLength: String(aiMessage.content).length },
+        'agentNode: got reply',
+      );
+      return {
+        messages: [aiMessage],
+        provider: slot.provider,
+        model: slot.model,
+      };
+    } catch (err) {
+      lastErr = err;
+      if (i < llmConfig.chat.length - 1) {
+        logger.warn(
+          { err: sanitizeLlmError(err), attemptIndex: i, failedProvider: slot.provider, failedModel: slot.model, nextProvider: llmConfig.chat[i + 1]!.provider },
+          'agentNode: LLM slot failed, trying next',
+        );
+      } else {
+        logger.error(
+          { err: sanitizeLlmError(err), attemptIndex: i, failedProvider: slot.provider, failedModel: slot.model },
+          'agentNode: all LLM slots exhausted',
+        );
+      }
     }
-    logger.warn(
-      { err: sanitizeLlmError(primaryErr), primaryProvider: state.provider, primaryModel: state.model, fallbackProvider: fallback.provider, fallbackModel: fallback.model },
-      'agentNode: primary LLM failed, trying fallback',
-    );
-    const fallbackModel = modelFactory.create(fallback.provider, fallback.model, fallback.temperature);
-    aiMessage = await fallbackModel.invoke(state.messages) as AIMessage;
-    // Update state to reflect fallback was used
-    return {
-      messages: [aiMessage],
-      provider: fallback.provider,
-      model: fallback.model,
-    };
   }
-
-  logger.debug({ contentLength: String(aiMessage.content).length }, 'agentNode: got reply');
-  return { messages: [aiMessage] };
+  throw lastErr;
 }
 
 // ── Conditional edge: checkBudgetRouter ─────────────────────────────────────
@@ -281,9 +283,6 @@ export async function summarizeNode(
   const messagesToSummarize = historyMessages.slice(0, oldestCount);
 
   try {
-    const primarySummarizationTemperature = llmConfig.summarization.primary.temperature;
-    let model = modelFactory.create(state.summarizationProvider, state.summarizationModel, primarySummarizationTemperature);
-
     const summarizationMessages = [
       new SystemMessage(
         'You are a conversation summarizer. Summarize the following conversation into 2-3 concise sentences capturing the key points and context. Output only the summary text, no preamble.'
@@ -292,32 +291,38 @@ export async function summarizeNode(
       new HumanMessage('Summarize the conversation above into 2-3 concise sentences.'),
     ];
 
-    let summaryResult: AIMessage;
-    let usedSummarizationProvider = state.summarizationProvider;
-    let usedSummarizationModel = state.summarizationModel;
-
-    try {
-      summaryResult = await model.invoke(summarizationMessages) as AIMessage;
-    } catch (primaryErr) {
-      const fallback = llmConfig.summarization.fallback;
-      if (!fallback) {
-        logger.warn({ err: sanitizeLlmError(primaryErr), provider: state.summarizationProvider, model: state.summarizationModel }, 'summarizeNode: primary summarization LLM failed, no fallback configured');
-        return {};
-      }
-      logger.warn(
-        { err: sanitizeLlmError(primaryErr), primaryProvider: state.summarizationProvider, primaryModel: state.summarizationModel, fallbackProvider: fallback.provider, fallbackModel: fallback.model },
-        'summarizeNode: primary summarization LLM failed, trying fallback',
-      );
+    let summaryResult: AIMessage | undefined;
+    let lastSumErr: unknown;
+    let usedSlotIdx = 0;
+    for (let i = 0; i < llmConfig.summarization.length; i++) {
+      const slot = llmConfig.summarization[i]!;
       try {
-        const fallbackModel = modelFactory.create(fallback.provider, fallback.model, fallback.temperature);
-        summaryResult = await fallbackModel.invoke(summarizationMessages) as AIMessage;
-        usedSummarizationProvider = fallback.provider;
-        usedSummarizationModel = fallback.model;
-      } catch (fallbackErr) {
-        logger.warn({ err: sanitizeLlmError(fallbackErr), provider: fallback.provider, model: fallback.model }, 'summarizeNode: fallback summarization LLM also failed, continuing without update');
-        return {};
+        const model = modelFactory.create(slot.provider, slot.model, slot.temperature);
+        summaryResult = await model.invoke(summarizationMessages) as AIMessage;
+        usedSlotIdx = i;
+        break; // success
+      } catch (err) {
+        lastSumErr = err;
+        if (i < llmConfig.summarization.length - 1) {
+          logger.warn(
+            { err: sanitizeLlmError(err), attemptIndex: i, failedProvider: slot.provider, nextProvider: llmConfig.summarization[i + 1]!.provider },
+            'summarizeNode: LLM slot failed, trying next',
+          );
+        } else {
+          logger.warn(
+            { err: sanitizeLlmError(err), attemptIndex: i, failedProvider: slot.provider },
+            'summarizeNode: all LLM slots exhausted',
+          );
+        }
       }
     }
+
+    if (!summaryResult) {
+      logger.warn({ err: sanitizeLlmError(lastSumErr) }, 'summarizeNode: summarization failed, continuing without update');
+      return {};
+    }
+
+    const usedSlot = llmConfig.summarization[usedSlotIdx]!;
 
     const newSummaryText =
       typeof summaryResult.content === 'string'
@@ -358,8 +363,8 @@ export async function summarizeNode(
     return {
       messages: removeMessages,
       summary: newSummaryText,
-      summarizationProvider: usedSummarizationProvider,
-      summarizationModel: usedSummarizationModel,
+      summarizationProvider: usedSlot.provider,
+      summarizationModel: usedSlot.model,
     };
   } catch (err) {
     logger.warn({ err: sanitizeLlmError(err) }, 'summarizeNode: summarization failed, continuing without update');
@@ -577,7 +582,7 @@ export class AgentService {
       return null;
     }
 
-    const { provider, model: modelName, temperature } = llmConfig.summarization.primary;
+    const { provider, model: modelName, temperature } = llmConfig.summarization[0]!;
     const model = this.modelFactory.create(provider, modelName, temperature);
 
     const historyMessages = toBaseMessages(row.messages);
