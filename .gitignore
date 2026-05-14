@@ -6,3 +6,4 @@ logs/
 .heapsnapshot
 coverage/
 *.pem
+.DS_Store
