@@ -52,3 +52,11 @@ export const adminLimiter = rateLimit({
     res.status(429).json({ error: 'Too many requests' });
   },
 });
+
+export const verifyEmailLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' },
+});

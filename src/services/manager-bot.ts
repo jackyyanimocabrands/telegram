@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger.js';
 import { findManagedBotByOwner } from '../db/queries/managed-bots.js';
+import { getToolsetState } from '../db/queries/conversations.js';
 import { env } from '../config/env.js';
 import { interpolate } from '../utils/interpolate.js';
 import type { TelegramClient } from './telegram-api.js';
@@ -10,6 +11,7 @@ import { toTelegramMarkdownV2 } from '../utils/telegram-markdownv2.js';
 import { checkThrottle } from './conversation-throttle.js';
 import { acquireLock, releaseLock } from './conversation-lock.js';
 import { managerQueue as defaultManagerQueue } from '../queues/manager-queue.js';
+import { resolveToolTier, getToolsForTier } from './tool-tier.js';
 import type { Queue } from 'bullmq';
 import type { ManagerMessageJobData } from '../queues/types.js';
 
@@ -23,7 +25,7 @@ export async function enqueueManagerMessage(
   message: Message,
   telegram: TelegramClient,
   managerBotToken: string,
-  botUsername: string,
+  _botUsername: string,
   queue: Queue<ManagerMessageJobData> = defaultManagerQueue,
 ): Promise<void> {
   const chatId = message.chat.id;
@@ -125,7 +127,15 @@ export async function processManagerMessage(
   const safeUsername = username && TELEGRAM_USERNAME_RE.test(username) ? username : null;
 
   try {
-    const managedBot = await findManagedBotByOwner(userId);
+    const [managedBot, toolsetStateResult] = await Promise.all([
+      findManagedBotByOwner(userId),
+      getToolsetState(managerBotId, userId).catch((err) => {
+        logger.warn({ err, botId: managerBotId, userId }, 'processManagerMessage: failed to load toolset state, proceeding with base tier');
+        return {} as Record<string, unknown>;
+      }),
+    ]);
+
+    let toolsetState: Record<string, unknown> = toolsetStateResult;
 
     let systemPrompt: string;
 
@@ -170,6 +180,21 @@ export async function processManagerMessage(
       }
     }
 
+    // Resolve tool tier for this user and load the appropriate tools
+    // B5: downgrade to base if authenticated tier but email is absent/empty
+    let tier = resolveToolTier(toolsetState);
+    if (tier === 'authenticated' && (typeof toolsetState.email !== 'string' || toolsetState.email.length === 0)) {
+      logger.warn({ botId: managerBotId, userId }, 'processManagerMessage: authenticated tier but no email — downgrading to base');
+      tier = 'base';
+    }
+    const tools = getToolsForTier(tier, {
+      userEmail: typeof toolsetState.email === 'string' ? toolsetState.email : '',
+      botId: managerBotId,
+      userId: String(userId),
+    });
+
+    logger.debug({ userId, toolTier: tier, toolCount: tools.length }, 'processManagerMessage: tool tier resolved');
+
     const TYPING_REFRESH_MS = 4000;
     let lastTypingAt = 0;
     const tryTyping = async (): Promise<void> => {
@@ -193,7 +218,7 @@ export async function processManagerMessage(
     let lastSentAt = 0;
     const throttleMs = env.STREAM_THROTTLE_MS;
     const draftId = Math.floor(Date.now() + Math.random() * 1000);
-    for await (const chunk of agentService.chatStream(managerBotId, userId, text, systemPrompt)) {
+    for await (const chunk of agentService.chatStream(managerBotId, userId, text, systemPrompt, tools)) {
       accumulated += chunk;
       const now = Date.now();
       await tryTyping();
@@ -206,6 +231,10 @@ export async function processManagerMessage(
     }
 
     const parts = splitAtSentenceBoundary(accumulated);
+    if (!accumulated.trim()) {
+      logger.warn({ chatId, userId }, 'processManagerMessage: empty reply from agent — skipping send');
+      return;
+    }
     for (const part of parts) {
       await telegram.sendMessage(managerBotToken, chatId, toTelegramMarkdownV2(part), { parse_mode: 'MarkdownV2' });
     }

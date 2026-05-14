@@ -35,9 +35,9 @@ describe('conversation-lock', () => {
       await acquireLock('manager:42', 30, redis);
       const setStub = redis.set as unknown as sinon.SinonStub;
       const args = setStub.firstCall.args;
-      expect(args[2]).to.equal('NX');
-      expect(args[3]).to.equal('EX');
-      expect(args[4]).to.equal(30);
+      expect(args[2]).to.equal('EX');
+      expect(args[3]).to.equal(30);
+      expect(args[4]).to.equal('NX');
     });
   });
 

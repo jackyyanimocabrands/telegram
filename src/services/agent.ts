@@ -4,6 +4,8 @@ import {
   SystemMessage,
   BaseMessage,
   RemoveMessage,
+  ToolMessage,
+  isAIMessage,
   type UsageMetadata,
 } from '@langchain/core/messages';
 import {
@@ -13,6 +15,7 @@ import {
   START,
   END,
 } from '@langchain/langgraph';
+import type { StructuredTool } from '@langchain/core/tools';
 import { logger } from '../utils/logger.js';
 import { llmConfig } from '../config/llm-config.js';
 import { ConversationService, toBaseMessages, fromBaseMessages } from './conversation.js';
@@ -47,6 +50,9 @@ function sanitizeLlmError(err: unknown): Record<string, unknown> {
 export interface ILlmModelFactory {
   create(provider: string, model: string, temperature?: number): Pick<BaseChatModel, 'invoke' | 'stream'>;
 }
+
+/** Maximum tool-call round-trips per graph invocation before forcing a stop. */
+const MAX_TOOL_CALL_ROUNDS = 5;
 
 // ── State annotation ────────────────────────────────────────────────────────
 
@@ -102,6 +108,23 @@ const AgentStateAnnotation = Annotation.Root({
     reducer: (_a: UsageMetadata | null, b: UsageMetadata | null) => b,
     default: () => null,
   }),
+  /**
+   * Tools available for the current graph invocation.
+   * Injected by the caller via the initial state; last-write wins semantics.
+   * Defaults to empty — no-tool path is unchanged from pre-tools behaviour.
+   */
+  tools: Annotation<StructuredTool[]>({
+    reducer: (_a: StructuredTool[], b: StructuredTool[]) => b,
+    default: () => [],
+  }),
+  /**
+   * Tracks how many tool-call round-trips have occurred in this invocation.
+   * Prevents infinite agent ↔ toolNode cycles.
+   */
+  toolCallRound: Annotation<number>({
+    reducer: (_a: number, b: number) => b,
+    default: () => 0,
+  }),
 });
 
 type AgentState = typeof AgentStateAnnotation.State;
@@ -116,7 +139,7 @@ const SUMMARY_PREFIX = 'Previous conversation summary:';
  * TR-2: Exported for unit testing.
  *
  * Loads conversation history from DB and builds the initial message list:
- *   [SystemMessage?] + [summary AIMessage?] + [...historyMessages] + [HumanMessage(userInput)]
+ *   [SystemMessage?] + [summary AIMessage?] + [...historyMessages] + [HumanMessage]
  * The new user message (HumanMessage) is appended last from state.userInput.
  */
 export async function loadHistoryNode(
@@ -182,6 +205,7 @@ export async function loadHistoryNode(
  *
  * Invokes the LLM with the full conversation context and returns the AI reply.
  * Attempts the primary model first; falls back to llmConfig.chat.fallback on error.
+ * When state.tools is non-empty, binds tools to the LLM via bindTools().
  */
 export async function agentNode(
   state: AgentState,
@@ -189,7 +213,7 @@ export async function agentNode(
 ): Promise<Partial<AgentState>> {
   const { modelFactory } = services;
   logger.debug(
-    { messageCount: state.messages.length, slotCount: llmConfig.chat.length },
+    { messageCount: state.messages.length, slotCount: llmConfig.chat.length, toolCount: (state.tools ?? []).length },
     'agentNode: invoking LLM',
   );
 
@@ -197,7 +221,22 @@ export async function agentNode(
   for (let i = 0; i < llmConfig.chat.length; i++) {
     const slot = llmConfig.chat[i]!;
     try {
-      const model = modelFactory.create(slot.provider, slot.model, slot.temperature);
+      const baseModel = modelFactory.create(slot.provider, slot.model, slot.temperature);
+      // Bind tools if present — bindTools() is only available on full BaseChatModel
+      // and is declared optional. We guard with typeof then cast to avoid TS2722.
+      // state.tools may be undefined in legacy call-sites that predate this field.
+      const activeTools: StructuredTool[] = state.tools ?? [];
+      let model: Pick<BaseChatModel, 'invoke' | 'stream'> = baseModel;
+      if (activeTools.length > 0) {
+        const bindToolsFn = (baseModel as BaseChatModel).bindTools;
+        if (typeof bindToolsFn === 'function') {
+          const bound = bindToolsFn.call(baseModel as BaseChatModel, activeTools);
+          if (bound) {
+            model = bound as unknown as Pick<BaseChatModel, 'invoke' | 'stream'>;
+          }
+        }
+      }
+
       const aiMessage = await model.invoke(state.messages) as AIMessage;
       logger.debug(
         { provider: slot.provider, model: slot.model, attemptIndex: i, contentLength: String(aiMessage.content).length },
@@ -226,6 +265,109 @@ export async function agentNode(
     }
   }
   throw lastErr;
+}
+
+// ── Node: toolNode ───────────────────────────────────────────────────────────
+
+/**
+ * Exported for unit testing.
+ *
+ * Executes any tool calls present in the last AI message.
+ * Each tool call is matched against state.tools by name; unknown tools
+ * produce a ToolMessage with an error description so the agent can recover.
+ * On success/failure the results are appended as ToolMessages and the
+ * toolCallRound counter is incremented.
+ *
+ * If the last message has no tool_calls (or is not an AI message) the node
+ * returns {} — a no-op that the conditional edge should never route to.
+ */
+export async function toolNode(state: AgentState): Promise<Partial<AgentState>> {
+  const lastMessage = state.messages[state.messages.length - 1];
+
+  if (!lastMessage || !isAIMessage(lastMessage) || !lastMessage.tool_calls?.length) {
+    return {};
+  }
+
+  const toolResults: ToolMessage[] = [];
+
+  for (const toolCall of lastMessage.tool_calls) {
+    const tool = state.tools.find(t => t.name === toolCall.name);
+    if (!tool) {
+      logger.warn({ toolName: toolCall.name }, 'toolNode: tool not found');
+      toolResults.push(
+        new ToolMessage({
+          content: `Tool ${toolCall.name} not found`,
+          tool_call_id: toolCall.id ?? '',
+        }),
+      );
+      continue;
+    }
+
+    try {
+      const result = await tool.invoke(toolCall.args as Record<string, unknown>);
+      toolResults.push(
+        new ToolMessage({
+          content: String(result),
+          tool_call_id: toolCall.id ?? '',
+        }),
+      );
+    } catch (err) {
+      logger.warn({ err, toolName: toolCall.name }, 'toolNode: tool execution error');
+      toolResults.push(
+        new ToolMessage({
+          content: `Tool error: ${String(err)}`,
+          tool_call_id: toolCall.id ?? '',
+        }),
+      );
+    }
+  }
+
+  logger.debug(
+    { toolCount: toolResults.length, round: state.toolCallRound + 1 },
+    'toolNode: tool calls executed',
+  );
+
+  return {
+    messages: toolResults,
+    toolCallRound: state.toolCallRound + 1,
+  };
+}
+
+// ── Conditional edge: agentRouter ────────────────────────────────────────────
+
+/**
+ * Exported for unit testing.
+ *
+ * Routes to 'tools' if:
+ *   - the last message is an AI message with tool_calls, AND
+ *   - we have not exceeded MAX_TOOL_CALL_ROUNDS
+ *
+ * Otherwise delegates to checkBudgetRouter ('summarize' or 'save').
+ */
+export function agentRouter(state: AgentState): 'tools' | 'summarize' | 'save' {
+  const lastMessage = state.messages[state.messages.length - 1];
+
+  if (
+    lastMessage &&
+    isAIMessage(lastMessage) &&
+    lastMessage.tool_calls?.length &&
+    state.toolCallRound < MAX_TOOL_CALL_ROUNDS
+  ) {
+    logger.debug(
+      { toolCallRound: state.toolCallRound, toolCallCount: lastMessage.tool_calls.length },
+      'agentRouter: routing to tools',
+    );
+    return 'tools';
+  }
+
+  if (state.toolCallRound >= MAX_TOOL_CALL_ROUNDS) {
+    logger.warn(
+      { toolCallRound: state.toolCallRound, maxRounds: MAX_TOOL_CALL_ROUNDS },
+      'agentRouter: max tool call rounds reached, routing to budget check',
+    );
+  }
+
+  return checkBudgetRouter(state);
 }
 
 // ── Conditional edge: checkBudgetRouter ─────────────────────────────────────
@@ -465,6 +607,12 @@ export async function saveNode(
 /**
  * Build and compile the LangGraph agent graph.
  * Nodes receive injected services via closures — no checkpointer (stateless between turns).
+ *
+ * Graph flow:
+ *   START → loadHistory → agent → [agentRouter]
+ *     ├─ tools  → toolNode → agent  (cycle, max MAX_TOOL_CALL_ROUNDS times)
+ *     ├─ summarize → summarize → save → END
+ *     └─ save   → save → END
  */
 export function buildAgentGraph(
   conversationService: ConversationService,
@@ -475,11 +623,13 @@ export function buildAgentGraph(
   return new StateGraph(AgentStateAnnotation)
     .addNode('loadHistory', (state: AgentState) => loadHistoryNode(state, services))
     .addNode('agent', (state: AgentState) => agentNode(state, services))
+    .addNode('toolExec', (state: AgentState) => toolNode(state))
     .addNode('summarize', (state: AgentState) => summarizeNode(state, services))
     .addNode('save', (state: AgentState) => saveNode(state, services))
     .addEdge(START, 'loadHistory')
     .addEdge('loadHistory', 'agent')
-    .addConditionalEdges('agent', checkBudgetRouter, { summarize: 'summarize', save: 'save' })
+    .addConditionalEdges('agent', agentRouter, { tools: 'toolExec', summarize: 'summarize', save: 'save' })
+    .addEdge('toolExec', 'agent')
     .addEdge('summarize', 'save')
     .addEdge('save', END)
     .compile();
@@ -508,12 +658,14 @@ export class AgentService {
    * @param userId              Telegram user id (numeric)
    * @param text                User message text
    * @param systemPromptOverride  Optional system prompt to use instead of stored one
+   * @param tools               Optional tools to make available to the agent
    */
   async chat(
     botId: string,
     userId: number,
     text: string,
     systemPromptOverride?: string,
+    tools?: StructuredTool[],
   ): Promise<string> {
     logger.debug({ botId, userId, textLength: text.length }, 'AgentService.chat: start');
 
@@ -525,6 +677,7 @@ export class AgentService {
       botId,
       userId,
       systemPromptOverride,
+      tools: tools ?? [],
     };
 
     const result = await this.graph.invoke(initialState);
@@ -564,12 +717,14 @@ export class AgentService {
    * @param userId              Telegram user id (numeric)
    * @param text                User message text
    * @param systemPromptOverride  Optional system prompt to use instead of stored one
+   * @param tools               Optional tools to make available to the agent
    */
   async *chatStream(
     botId: string,
     userId: number,
     text: string,
     systemPromptOverride?: string,
+    tools?: StructuredTool[],
   ): AsyncGenerator<string> {
     logger.debug({ botId, userId, textLength: text.length }, 'AgentService.chatStream: start');
 
@@ -579,6 +734,7 @@ export class AgentService {
       botId,
       userId,
       systemPromptOverride,
+      tools: tools ?? [],
     };
 
     let tokenCount = 0;

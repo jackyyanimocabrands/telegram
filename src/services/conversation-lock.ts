@@ -1,4 +1,4 @@
-import type Redis from 'ioredis';
+import type { Redis } from 'ioredis';
 import { getRedisClient } from './redis.js';
 import { logger } from '../utils/logger.js';
 
@@ -17,7 +17,7 @@ export async function acquireLock(
   ttlSecs: number,
   redisClient: Redis = getRedisClient(),
 ): Promise<boolean> {
-  const result = await redisClient.set(lockKey(conversationId), '1', 'NX', 'EX', ttlSecs);
+  const result = await redisClient.set(lockKey(conversationId), '1', 'EX', ttlSecs, 'NX');
   return result === 'OK';
 }
 

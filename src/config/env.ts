@@ -10,7 +10,6 @@ const envSchema = z.object({
   BOT_TOKEN: z.string().min(1, 'BOT_TOKEN is required'),
   BOT_USERNAME: z.string().min(1, 'BOT_USERNAME is required').transform(v => v.replace(/^@/, '')),
   WEBHOOK_SECRET: z.string().min(32).regex(/^[A-Za-z0-9_\-]+$/, 'WEBHOOK_SECRET must be at least 32 chars and contain only [A-Za-z0-9_-]'),
-  CHILD_WEBHOOK_SECRET: z.string().min(32).regex(/^[A-Za-z0-9_\-]+$/, 'CHILD_WEBHOOK_SECRET must be at least 32 chars and contain only [A-Za-z0-9_-]'),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   ENCRYPTION_MASTER_KEY: z.string().regex(/^[0-9a-f]{64}$/, 'ENCRYPTION_MASTER_KEY must be 64 hex chars (32 bytes)'),
   ENCRYPTION_KEY_VERSION: z.coerce.number().int().positive().default(1),
@@ -53,6 +52,17 @@ const envSchema = z.object({
   ADMIN_API_KEY: z.string().min(32),
   ADMIN_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000), // 15 min
   ADMIN_RATE_LIMIT_MAX:       z.coerce.number().int().positive().default(15),
+  // Tool system
+  BOT_MGMT_API_URL: z.string().url().optional(),
+  BOT_MGMT_API_KEY: z.string().min(32).optional(),
+  EXA_API_KEY: z.string().min(1).optional(),
+  WEBFETCH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
+  WEBFETCH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
+  WEBFETCH_DOMAIN_ALLOWLIST: z.string().default(''),
+  // Email verification
+  SES_REGION: z.string().default('us-east-1'),
+  SES_FROM_ADDRESS: z.string().email().optional(),
+  EMAIL_VERIFICATION_TOKEN_TTL_SECS: z.coerce.number().int().positive().default(86400), // 24h
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -64,7 +74,8 @@ if (!parsed.success) {
     'ENCRYPTION_MASTER_KEY', 'ES256_PRIVATE_KEY', 'ES256_PUBLIC_KEY',
     'BOT_TOKEN', 'BOT_USERNAME', 'WEBHOOK_SECRET', 'CHILD_WEBHOOK_SECRET',
     'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'OPENROUTER_API_KEY',
-    'ADMIN_API_KEY',
+    'ADMIN_API_KEY', 'BOT_MGMT_API_KEY', 'EXA_API_KEY',
+    'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY',
   ]);
   const errors = parsed.error.flatten().fieldErrors;
   const redacted = Object.fromEntries(

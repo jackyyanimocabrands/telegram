@@ -66,6 +66,13 @@ describe('handleManagerBotMessage', () => {
       '../../src/db/queries/managed-bots.js': {
         findManagedBotByOwner: findManagedBotByOwnerStub,
       },
+      '../../src/db/queries/conversations.js': {
+        getToolsetState: sinon.stub().resolves({}),
+      },
+      '../../src/services/tool-tier.js': {
+        resolveToolTier: sinon.stub().returns('base'),
+        getToolsForTier: sinon.stub().returns([]),
+      },
       '../../src/services/conversation-throttle.js': {
         checkThrottle: checkThrottleStub,
       },
@@ -586,5 +593,33 @@ describe('processManagerMessage', () => {
     const fallback: string = mockTelegram.sendMessage.firstCall.args[2];
     expect(fallback).to.include('Sorry');
     expect(fallback).to.include('try again');
+  });
+
+  it('still calls chatStream when getToolsetState rejects (fail-open)', async () => {
+    async function* freshStream() { yield 'AI reply'; }
+    const freshChatStream = sinon.stub().returns(freshStream());
+    const freshAgentService = { chatStream: freshChatStream };
+
+    const mod = await esmock('../../src/services/manager-bot.ts', {
+      '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerStub },
+      '../../src/db/queries/conversations.js': {
+        getToolsetState: sinon.stub().rejects(new Error('Redis timeout')),
+      },
+      '../../src/services/tool-tier.js': {
+        resolveToolTier: sinon.stub().returns('base'),
+        getToolsForTier: sinon.stub().returns([]),
+      },
+      '../../src/services/conversation-throttle.js': { checkThrottle: sinon.stub().resolves({ allowed: true, retryAfterMs: 0 }) },
+      '../../src/services/conversation-lock.js': { acquireLock: sinon.stub().resolves(true), releaseLock: sinon.stub().resolves() },
+      '../../src/queues/manager-queue.js': { managerQueue: { add: sinon.stub().resolves({ id: 'j1' }) } },
+    });
+
+    const jobData = makeJobData();
+    await mod.processManagerMessage(jobData, mockTelegram, freshAgentService, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+
+    // Fail-open: chatStream is still called despite getToolsetState error
+    expect(freshChatStream.calledOnce).to.be.true;
+    // Message is still sent
+    expect(mockTelegram.sendMessage.calledOnce).to.be.true;
   });
 });

@@ -2,7 +2,7 @@ import { describe, it, afterEach } from 'mocha';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import esmock from 'esmock';
-import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from '@langchain/core/messages';
 
 // ---------------------------------------------------------------------------
 // Helpers — stub ConversationRow
@@ -689,6 +689,220 @@ describe('AgentService (LangGraph)', () => {
       await new Promise(resolve => setImmediate(resolve));
 
       expect(convSvc.resetForceSummarize.called).to.be.false;
+    });
+  });
+
+  // ── toolNode (unit) ───────────────────────────────────────────────────────
+
+  describe('toolNode (unit)', () => {
+    async function buildToolNode() {
+      const module = await esmock('../../src/services/agent.ts', {
+        '../../src/config/llm-config.js': { llmConfig: mockLlmConfig },
+        '../../src/db/queries/conversations.js': {
+          setConversationSystemPrompt: sinon.stub().resolves(),
+          clearConversation: sinon.stub().resolves(),
+        },
+      });
+      return module.toolNode as (state: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    }
+
+    it('returns {} when last message is not an AI message', async () => {
+      const toolNode = await buildToolNode();
+
+      const state = {
+        messages: [new HumanMessage('hello')],
+        tools: [],
+        toolCallRound: 0,
+      };
+
+      const result = await toolNode(state);
+      expect(result).to.deep.equal({});
+    });
+
+    it('returns {} when last AI message has no tool_calls', async () => {
+      const toolNode = await buildToolNode();
+
+      const state = {
+        messages: [new AIMessage('plain reply')],
+        tools: [],
+        toolCallRound: 0,
+      };
+
+      const result = await toolNode(state);
+      expect(result).to.deep.equal({});
+    });
+
+    it('executes tool call and returns ToolMessage result', async () => {
+      const toolNode = await buildToolNode();
+
+      const stubTool = {
+        name: 'my_tool',
+        invoke: sinon.stub().resolves('tool output'),
+      };
+
+      // Build an AI message with a tool_call
+      const aiMsg = new AIMessage({
+        content: '',
+        tool_calls: [
+          { name: 'my_tool', args: { query: 'test' }, id: 'call-1', type: 'tool_call' },
+        ],
+      });
+
+      const state = {
+        messages: [aiMsg],
+        tools: [stubTool],
+        toolCallRound: 0,
+      };
+
+      const result = await toolNode(state) as { messages: ToolMessage[]; toolCallRound: number };
+
+      expect(result.messages).to.be.an('array').with.length(1);
+      expect(result.messages[0]).to.be.instanceOf(ToolMessage);
+      expect(result.messages[0]!.content).to.equal('tool output');
+      expect(result.messages[0]!.tool_call_id).to.equal('call-1');
+      expect(result.toolCallRound).to.equal(1);
+    });
+
+    it('returns error ToolMessage when tool is not found in state.tools', async () => {
+      const toolNode = await buildToolNode();
+
+      const aiMsg = new AIMessage({
+        content: '',
+        tool_calls: [
+          { name: 'unknown_tool', args: {}, id: 'call-2', type: 'tool_call' },
+        ],
+      });
+
+      const state = {
+        messages: [aiMsg],
+        tools: [],
+        toolCallRound: 0,
+      };
+
+      const result = await toolNode(state) as { messages: ToolMessage[] };
+      expect(result.messages).to.be.an('array').with.length(1);
+      expect(result.messages[0]!.content).to.include('unknown_tool');
+      expect(result.messages[0]!.content).to.include('not found');
+    });
+
+    it('returns error ToolMessage when tool.invoke throws', async () => {
+      const toolNode = await buildToolNode();
+
+      const failingTool = {
+        name: 'flaky_tool',
+        invoke: sinon.stub().rejects(new Error('tool failure')),
+      };
+
+      const aiMsg = new AIMessage({
+        content: '',
+        tool_calls: [
+          { name: 'flaky_tool', args: {}, id: 'call-3', type: 'tool_call' },
+        ],
+      });
+
+      const state = {
+        messages: [aiMsg],
+        tools: [failingTool],
+        toolCallRound: 0,
+      };
+
+      const result = await toolNode(state) as { messages: ToolMessage[] };
+      expect(result.messages).to.be.an('array').with.length(1);
+      expect(result.messages[0]!.content).to.include('Tool error');
+      expect(result.messages[0]!.content).to.include('tool failure');
+    });
+
+    it('increments toolCallRound on each execution', async () => {
+      const toolNode = await buildToolNode();
+
+      const stubTool = {
+        name: 'counter_tool',
+        invoke: sinon.stub().resolves('counted'),
+      };
+
+      const aiMsg = new AIMessage({
+        content: '',
+        tool_calls: [
+          { name: 'counter_tool', args: {}, id: 'call-4', type: 'tool_call' },
+        ],
+      });
+
+      const state = {
+        messages: [aiMsg],
+        tools: [stubTool],
+        toolCallRound: 2,
+      };
+
+      const result = await toolNode(state) as { toolCallRound: number };
+      expect(result.toolCallRound).to.equal(3);
+    });
+  });
+
+  // ── agentRouter (unit) ────────────────────────────────────────────────────
+
+  describe('agentRouter (unit)', () => {
+    async function buildAgentRouter() {
+      const module = await esmock('../../src/services/agent.ts', {
+        '../../src/config/llm-config.js': { llmConfig: mockLlmConfig },
+        '../../src/db/queries/conversations.js': {
+          setConversationSystemPrompt: sinon.stub().resolves(),
+          clearConversation: sinon.stub().resolves(),
+        },
+      });
+      return module.agentRouter as (state: Record<string, unknown>) => string;
+    }
+
+    it('routes to "tools" when last AI message has tool_calls and round is within limit', async () => {
+      const agentRouter = await buildAgentRouter();
+
+      const aiMsg = new AIMessage({
+        content: '',
+        tool_calls: [{ name: 'my_tool', args: {}, id: 'c1', type: 'tool_call' }],
+      });
+
+      const state = {
+        messages: [aiMsg],
+        tools: [{ name: 'my_tool' }],
+        toolCallRound: 0,
+        model: 'unknown-model-xyz',
+        forceSummarize: false,
+      };
+
+      expect(agentRouter(state)).to.equal('tools');
+    });
+
+    it('routes to "save" (not "tools") when toolCallRound >= MAX_TOOL_CALL_ROUNDS', async () => {
+      const agentRouter = await buildAgentRouter();
+
+      const aiMsg = new AIMessage({
+        content: '',
+        tool_calls: [{ name: 'my_tool', args: {}, id: 'c2', type: 'tool_call' }],
+      });
+
+      const state = {
+        messages: [aiMsg],
+        tools: [{ name: 'my_tool' }],
+        toolCallRound: 5, // MAX_TOOL_CALL_ROUNDS = 5
+        model: 'unknown-model-xyz',
+        forceSummarize: false,
+      };
+
+      // Should fall through to checkBudgetRouter → 'save' (zero messages, under budget)
+      expect(agentRouter(state)).to.equal('save');
+    });
+
+    it('routes to "save" when last AI message has no tool_calls', async () => {
+      const agentRouter = await buildAgentRouter();
+
+      const state = {
+        messages: [new AIMessage('plain text response')],
+        tools: [],
+        toolCallRound: 0,
+        model: 'unknown-model-xyz',
+        forceSummarize: false,
+      };
+
+      expect(agentRouter(state)).to.equal('save');
     });
   });
 });

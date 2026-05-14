@@ -38,7 +38,7 @@ export class WorkerBootstrap {
 
       logger.info(
         { concurrency: env.WORKER_CONCURRENCY },
-        'Worker: BullMQ workers started (manager-messages + child-messages)',
+        'Worker: BullMQ workers started (manager-messages)',
       );
     } catch (err) {
       logger.fatal({ err }, 'Worker: failed to start');

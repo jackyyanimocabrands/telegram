@@ -12,19 +12,13 @@ import { createWebhookRouter } from '../routes/webhook.js';
 import { botStatusRouter } from '../routes/bot-status.js';
 import { errorHandler } from '../middleware/error-handler.js';
 import { adminRouter } from '../routes/admin.js';
-import { authLimiter, webhookLimiter, apiLimiter, adminLimiter } from '../middleware/rate-limiter.js';
+import { authLimiter, webhookLimiter, apiLimiter, adminLimiter, verifyEmailLimiter } from '../middleware/rate-limiter.js';
 import { BotRegistry } from '../services/bot-registry.js';
-import { ManagedBotService } from '../services/managed-bot.js';
-import { createChildBotHandler } from '../services/child-bot.js';
-import { getDecryptedBotToken } from '../services/token-store.js';
 import { HttpTelegramClient } from '../services/telegram-api.js';
 import * as managedBotQueries from '../db/queries/managed-bots.js';
-import { AgentService } from '../services/agent.js';
-import { ConversationService } from '../services/conversation.js';
-import { LlmProviderFactory } from '../services/llm/factory.js';
-import { handleManagerBotMessage, enqueueManagerMessage } from '../services/manager-bot.js';
+import { enqueueManagerMessage } from '../services/manager-bot.js';
 import { managerQueue } from '../queues/manager-queue.js';
-import { childQueue } from '../queues/child-queue.js';
+import { verifyEmailRouter } from '../routes/verify-email.js';
 
 export class AppBootstrap {
   private app: express.Application;
@@ -89,13 +83,6 @@ export class AppBootstrap {
       const telegram = new HttpTelegramClient();
       this.registry = new BotRegistry(telegram);
 
-      // ── AI agent layer setup ──
-      const factory = new LlmProviderFactory();
-      const conversationService = new ConversationService();
-      const agentService = new AgentService(conversationService, factory as any);
-
-      const managedBotService = new ManagedBotService(this.registry, telegram, agentService);
-
       // Register manager bot
       this.registry.registerBot({
         botId: 'manager',
@@ -105,13 +92,7 @@ export class AppBootstrap {
         webhookUrl: `${env.BASE_URL}/webhook/telegram`,
         webhookSecret: env.WEBHOOK_SECRET,
         handler: async (update) => {
-          if (update.managed_bot) {
-            logger.info(
-              { updateId: update.update_id, botId: update.managed_bot.bot?.id },
-              'Processing managed_bot update',
-            );
-            await managedBotService.handleManagedBotUpdated(update.update_id, update.managed_bot);
-          } else if (update.message) {
+          if (update.message) {
             await enqueueManagerMessage(
               update.message,
               telegram,
@@ -124,31 +105,11 @@ export class AppBootstrap {
         },
       });
 
-      // Load all ACTIVE child bots from DB and register them
-      const activeBots = await managedBotQueries.findAllActiveManagedBots();
-      logger.info({ count: activeBots.length }, 'Loading active child bots');
-      for (const bot of activeBots) {
-        let token: string;
-        try {
-          token = await getDecryptedBotToken(bot.bot_id);
-        } catch (err) {
-          logger.error({ err, botId: bot.bot_id }, 'Failed to decrypt token for active bot, skipping');
-          continue;
-        }
-        this.registry.registerBot({
-          botId: bot.bot_id,
-          token,
-          updateMode: env.MANAGER_UPDATE_MODE,
-          allowedUpdates: ['message', 'callback_query'],
-          webhookUrl: `${env.BASE_URL}/webhook/bot/${bot.bot_id}`,
-          webhookSecret: env.CHILD_WEBHOOK_SECRET,
-          initialOffset: bot.polling_offset ?? 0,
-          handler: createChildBotHandler(bot.bot_id, agentService),
-        });
-      }
-
       // Health check — registered BEFORE rate limiters; must always be reachable.
       this.app.use(healthRouter);
+
+      // Public routes — mounted BEFORE auth middleware
+      this.app.use('/verify-email', verifyEmailLimiter, verifyEmailRouter);
 
       // Start the registry (wires all transports)
       await this.registry.start();
@@ -191,7 +152,7 @@ export class AppBootstrap {
     if (this.registry) {
       await this.registry.stop();
     }
-    await Promise.all([managerQueue.close(), childQueue.close()]).catch((err) => {
+    await managerQueue.close().catch((err) => {
       logger.error({ err }, 'Error closing BullMQ queues');
     });
     await new Promise<void>((resolve) => {

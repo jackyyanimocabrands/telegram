@@ -174,3 +174,32 @@ export async function resetForceSummarize(
     [botId, telegramUserId],
   );
 }
+
+export async function updateToolsetState(
+  botId: string,
+  telegramUserId: number,
+  patch: Record<string, unknown>,
+  pool: Pool = defaultPool,
+): Promise<number> {
+  logger.debug({ botId, telegramUserId }, 'updateToolsetState');
+  const result = await pool.query(
+    `UPDATE conversations
+     SET toolset_state = toolset_state || $1::jsonb, updated_at = NOW()
+     WHERE bot_id = $2 AND telegram_user_id = $3`,
+    [JSON.stringify(patch), botId, telegramUserId],
+  );
+  return result.rowCount ?? 0;
+}
+
+export async function getToolsetState(
+  botId: string,
+  telegramUserId: number,
+  pool: Pool = defaultPool,
+): Promise<Record<string, unknown>> {
+  logger.debug({ botId, telegramUserId }, 'getToolsetState');
+  const result = await pool.query<{ toolset_state: Record<string, unknown> }>(
+    'SELECT toolset_state FROM conversations WHERE bot_id = $1 AND telegram_user_id = $2',
+    [botId, telegramUserId],
+  );
+  return result.rows[0]?.toolset_state ?? {};
+}
