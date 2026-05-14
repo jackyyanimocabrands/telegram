@@ -108,4 +108,23 @@ describe('toTelegramMarkdownV2', () => {
     const output = toTelegramMarkdownV2('**bold** and [link](https://example.com)');
     expect(output).to.equal('*bold* and [link](https://example.com)');
   });
+
+  it('link with bold text: [**click here**](url) → [*click here*](url)', () => {
+    const output = toTelegramMarkdownV2('[**click here**](https://example.com)');
+    expect(output).to.equal('[*click here*](https://example.com)');
+  });
+
+  it("link with bold text containing special chars: [**Aryoukitten's Bot**](url) — apostrophe not escaped", () => {
+    const output = toTelegramMarkdownV2("[**Aryoukitten's Bot**](https://t.me/bot)");
+    expect(output).to.equal("[*Aryoukitten's Bot*](https://t.me/bot)");
+  });
+
+  it('bold link regression: **[click here](url)** still renders correctly', () => {
+    const output = toTelegramMarkdownV2('**[click here](https://example.com)**');
+    expect(output).to.equal('*[click here](https://example.com)*');
+  });
+
+  it('plain **text** still works normally (no infinite loop, no regression)', () => {
+    expect(toTelegramMarkdownV2('**text**')).to.equal('*text*');
+  });
 });

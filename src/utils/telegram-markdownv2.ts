@@ -28,6 +28,11 @@ export function toTelegramMarkdownV2(text: string): string {
     save(`*[${escMdV2(t)}](${escUrlMdV2(u)})*`),
   );
 
+  // Link with bold text: [**text**](url) → [*escapedText*](url)
+  text = text.replace(/\[\*\*([^\]]+)\*\*\]\(([^)]+)\)/gs, (_: string, t: string, u: string) =>
+    save(`[*${escMdV2(t)}*](${escUrlMdV2(u)})`),
+  );
+
   // Bold: **text** → *text*
   text = text.replace(/\*\*(.+?)\*\*/gs, (_: string, inner: string) =>
     save('*' + escMdV2(inner) + '*'),
@@ -58,7 +63,15 @@ export function toTelegramMarkdownV2(text: string): string {
 
   // Step 5: restore saved segments
   // \x01N\x01 is not in the MarkdownV2 special-char set so it survives step 4 unmodified
-  text = text.replace(/\x01(\d+)\x01/g, (_: string, i: string) => saved[Number(i)] ?? '');
+  // Multi-pass restore: repeat until no more placeholders remain.
+  // Saved items can reference earlier saved items (e.g. bold inside a link text),
+  // requiring multiple passes to fully resolve. Circular references are impossible
+  // because each save() appends a new index — no entry can reference a later one.
+  let prev = '';
+  while (prev !== text) {
+    prev = text;
+    text = text.replace(/\x01(\d+)\x01/g, (_: string, i: string) => saved[Number(i)] ?? '');
+  }
 
   return text;
 }
