@@ -280,7 +280,7 @@ export async function enqueueChildMessage(
         messageId: message.message_id,
         text,
       },
-      { jobId: `msg:${botIdStr}:${message.message_id}` },
+      { jobId: `msg-${botIdStr}-${message.message_id}` },
     );
     logger.info({ chatId, userId, conversationId }, 'enqueueChildMessage: enqueued');
   } catch (err) {

@@ -86,7 +86,7 @@ export async function enqueueManagerMessage(
         firstName: from.first_name ?? '',
         username: from.username,
       },
-      { jobId: `msg:${message.message_id}` },
+      { jobId: `msg-${message.message_id}` },
     );
     logger.info({ chatId, userId: from.id, conversationId }, 'enqueueManagerMessage: enqueued');
   } catch (err) {

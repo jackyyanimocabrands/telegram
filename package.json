@@ -15,8 +15,10 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "dev:cli": "tsx watch src/cli/index.ts start",
+    "dev:worker": "tsx watch src/cli/index.ts worker",
     "build": "tsc",
     "start": "node dist/cli/index.js start",
+    "worker": "node dist/cli/index.js worker",
     "test": "mocha",
     "test:watch": "mocha --watch",
     "lint": "eslint src --ext .ts",
