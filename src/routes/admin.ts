@@ -81,7 +81,7 @@ adminRouter.get('/token-usage/summary', async (req, res) => {
 /**
  * GET /admin/token-usage/conversation/:botId/:userId
  * Params: botId (string), userId (number - telegram_user_id)
- * Query: from?, to?, limit?
+ * Query: from?, to?
  */
 adminRouter.get('/token-usage/conversation/:botId/:userId', async (req, res) => {
   try {
@@ -111,13 +111,9 @@ adminRouter.get('/token-usage/conversation/:botId/:userId', async (req, res) => 
       return;
     }
 
-    // E3 — parse limit
-    const limit = parseLimitParam(req.query.limit);
-
-    const filters: TokenUsageRawFilters = {};
+    const filters: { from?: Date; to?: Date } = {};
     if (fromDate !== null) filters.from = fromDate;
     if (toDate !== null) filters.to = toDate;
-    if (limit !== undefined) filters.limit = limit;
 
     const rows = await getConversationTokenUsage(pool, botId, userId, filters);
     res.json(rows);

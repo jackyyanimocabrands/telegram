@@ -203,40 +203,11 @@ describe('admin routes', () => {
       expect(userId).to.equal(42);
     });
 
-    it('passes undefined limit when limit=0 (invalid)', async () => {
-      await request(app)
-        .get('/admin/token-usage/conversation/bot-1/42?limit=0')
+    it('returns 400 for invalid "from" date', async () => {
+      const res = await request(app)
+        .get('/admin/token-usage/conversation/bot-1/42?from=not-a-date')
         .set('Authorization', AUTH_HEADER);
-
-      const [, , , filters] = getConversationTokenUsageStub.firstCall.args as [unknown, string, number, { limit?: number }];
-      expect(filters.limit).to.be.undefined;
-    });
-
-    it('passes undefined limit when limit=-1 (invalid)', async () => {
-      await request(app)
-        .get('/admin/token-usage/conversation/bot-1/42?limit=-1')
-        .set('Authorization', AUTH_HEADER);
-
-      const [, , , filters] = getConversationTokenUsageStub.firstCall.args as [unknown, string, number, { limit?: number }];
-      expect(filters.limit).to.be.undefined;
-    });
-
-    it('passes undefined limit when limit=abc (non-numeric)', async () => {
-      await request(app)
-        .get('/admin/token-usage/conversation/bot-1/42?limit=abc')
-        .set('Authorization', AUTH_HEADER);
-
-      const [, , , filters] = getConversationTokenUsageStub.firstCall.args as [unknown, string, number, { limit?: number }];
-      expect(filters.limit).to.be.undefined;
-    });
-
-    it('caps limit to 5000 when limit=6000', async () => {
-      await request(app)
-        .get('/admin/token-usage/conversation/bot-1/42?limit=6000')
-        .set('Authorization', AUTH_HEADER);
-
-      const [, , , filters] = getConversationTokenUsageStub.firstCall.args as [unknown, string, number, { limit?: number }];
-      expect(filters.limit).to.equal(5000);
+      expect(res.status).to.equal(400);
     });
   });
 

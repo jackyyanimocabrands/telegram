@@ -22,12 +22,11 @@ params:path {
 params:query {
   ~from: 2026-01-01T00:00:00Z
   ~to: 2026-12-31T23:59:59Z
-  ~limit: 100
 }
 
 docs {
-  Returns raw token usage rows for a single (botId, telegramUserId) conversation,
-  ordered newest-first.
+  Returns aggregated token usage for a single (botId, telegramUserId) conversation,
+  grouped by provider, model, and usage_type.
 
   Path params:
   - botId   string  — the bot's internal ID
@@ -36,17 +35,13 @@ docs {
   Optional query params:
   - from    ISO date string
   - to      ISO date string
-  - limit   integer 1–5000 (default: 1000)
 
   Response fields per row:
-  - id                 UUID
-  - bot_id             string
-  - telegram_user_id   string
-  - provider           string
-  - model              string
-  - usage_type         "chat" | "summarization"
-  - input_tokens       number
-  - output_tokens      number
-  - total_tokens       number
-  - created_at         ISO timestamp
+  - provider               string
+  - model                  string
+  - usage_type             "chat" | "summarization"
+  - total_input_tokens     string  (bigint as string)
+  - total_output_tokens    string  (bigint as string)
+  - sum_total_tokens       string  (bigint as string)
+  - call_count             string  (bigint as string)
 }

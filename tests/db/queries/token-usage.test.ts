@@ -135,26 +135,25 @@ describe('token-usage queries', () => {
       expect(params).to.include(from);
     });
 
-    it('appends LIMIT with value 500 when limit: 500 is specified', async () => {
-      await getConversationTokenUsage(pool, 'bot-1', 42, { limit: 500 });
-      const [sql, params] = queryStub.firstCall.args as [string, unknown[]];
-      expect(sql).to.include('LIMIT');
-      const limitParam = params[params.length - 1];
-      expect(limitParam).to.equal(500);
-    });
-
-    it('defaults to LIMIT 1000 when no limit specified', async () => {
-      await getConversationTokenUsage(pool, 'bot-1', 42, {});
-      const [sql, params] = queryStub.firstCall.args as [string, unknown[]];
-      expect(sql).to.include('LIMIT');
-      const limitParam = params[params.length - 1];
-      expect(limitParam).to.equal(1000);
-    });
-
-    it('SQL contains ORDER BY created_at DESC', async () => {
+    it('SQL contains GROUP BY provider, model, usage_type', async () => {
       await getConversationTokenUsage(pool, 'bot-1', 42, {});
       const [sql] = queryStub.firstCall.args as [string];
-      expect(sql).to.include('ORDER BY created_at DESC');
+      expect(sql).to.include('GROUP BY provider, model, usage_type');
+    });
+
+    it('SQL contains SUM(input_tokens) and sum_total_tokens', async () => {
+      await getConversationTokenUsage(pool, 'bot-1', 42, {});
+      const [sql] = queryStub.firstCall.args as [string];
+      expect(sql).to.include('SUM(input_tokens)');
+      expect(sql).to.include('SUM(output_tokens)');
+      expect(sql).to.include('SUM(total_tokens)');
+      expect(sql).to.include('sum_total_tokens');
+    });
+
+    it('SQL does not contain LIMIT', async () => {
+      await getConversationTokenUsage(pool, 'bot-1', 42, {});
+      const [sql] = queryStub.firstCall.args as [string];
+      expect(sql).to.not.include('LIMIT');
     });
   });
 

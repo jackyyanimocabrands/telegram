@@ -119,8 +119,8 @@ export async function getConversationTokenUsage(
   pool: Pool,
   botId: string,
   telegramUserId: number,
-  filters: TokenUsageRawFilters,
-): Promise<TokenUsageRow[]> {
+  filters: Pick<TokenUsageRawFilters, 'from' | 'to'>,
+): Promise<TokenUsageSummaryRow[]> {
   const params: unknown[] = [botId, telegramUserId];
   const conditions: string[] = ['bot_id = $1', 'telegram_user_id = $2'];
 
@@ -133,14 +133,19 @@ export async function getConversationTokenUsage(
     conditions.push(`created_at <= $${params.length}`);
   }
 
-  const limitVal = filters.limit ?? 1000;
-  params.push(limitVal);
-
-  const result = await pool.query<TokenUsageRow>(
-    `SELECT * FROM token_usage
+  const result = await pool.query<TokenUsageSummaryRow>(
+    `SELECT
+       provider,
+       model,
+       usage_type,
+       SUM(input_tokens)::TEXT  AS total_input_tokens,
+       SUM(output_tokens)::TEXT AS total_output_tokens,
+       SUM(total_tokens)::TEXT  AS sum_total_tokens,
+       COUNT(*)::TEXT           AS call_count
+     FROM token_usage
      WHERE ${conditions.join(' AND ')}
-     ORDER BY created_at DESC
-     LIMIT $${params.length}`,
+     GROUP BY provider, model, usage_type
+     ORDER BY provider, model, usage_type`,
     params,
   );
 
