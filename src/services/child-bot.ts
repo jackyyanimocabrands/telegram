@@ -95,6 +95,7 @@ export async function handleChildBotMessage(
 
   // Log text length, not text content, to avoid persisting PII in logs
   logger.info({ botId, chatId, from: message.from?.id, textLength: text.length }, 'handleChildBotMessage: received');
+  logger.trace({ botId, chatId, userId: message.from?.id, text }, 'handleChildBotMessage: message text');
 
   // Guard: need a user id to key conversations
   if (!message.from) {

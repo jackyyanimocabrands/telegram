@@ -15,6 +15,7 @@ describe('handleManagerBotMessage', () => {
     generateWarmPrompt: sinon.SinonStub;
   };
   let findManagedBotByOwnerStub: sinon.SinonStub;
+  let checkManagerThrottleStub: sinon.SinonStub;
 
   const MANAGER_TOKEN = 'manager-token-abc';
   const MANAGER_BOT_ID = 'manager';
@@ -55,10 +56,14 @@ describe('handleManagerBotMessage', () => {
     };
 
     findManagedBotByOwnerStub = sinon.stub().resolves(null);
+    checkManagerThrottleStub = sinon.stub().resolves({ allowed: true, retryAfterMs: 0 });
 
     const module = await esmock('../../src/services/manager-bot.ts', {
       '../../src/db/queries/managed-bots.js': {
         findManagedBotByOwner: findManagedBotByOwnerStub,
+      },
+      '../../src/services/conversation-throttle.js': {
+        checkManagerThrottle: checkManagerThrottleStub,
       },
     });
     handleManagerBotMessage = module.handleManagerBotMessage;
@@ -251,6 +256,50 @@ describe('handleManagerBotMessage', () => {
     expect(mockTelegram.sendMessage.called).to.be.true;
     const text: string = mockTelegram.sendMessage.firstCall.args[2];
     expect(text).to.include('safe manager reply');
+  });
+
+  describe('conversation throttle', () => {
+    it('replies with wait seconds and skips chatStream when throttled', async () => {
+      const throttledStub = sinon.stub().resolves({ allowed: false, retryAfterMs: 3500 });
+      const mod = await esmock('../../src/services/manager-bot.ts', {
+        '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerStub },
+        '../../src/services/conversation-throttle.js': { checkManagerThrottle: throttledStub },
+      });
+      const message = makeMessage({ chatId: 100, fromId: 42 });
+
+      await mod.handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+
+      expect(agentServiceStub.chatStream.called).to.be.false;
+      expect(mockTelegram.sendMessage.calledOnce).to.be.true;
+      const replyText: string = mockTelegram.sendMessage.firstCall.args[2];
+      // Math.ceil(3500 / 1000) = 4
+      expect(replyText).to.include('4');
+      expect(replyText).to.include('second');
+    });
+
+    it('proceeds normally when throttle allows the message', async () => {
+      const message = makeMessage({ fromId: 77, text: 'hello' });
+
+      await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+
+      expect(agentServiceStub.chatStream.calledOnce).to.be.true;
+      expect(checkManagerThrottleStub.calledOnce).to.be.true;
+      expect(checkManagerThrottleStub.firstCall.args[0]).to.equal(77);
+    });
+
+    it('proceeds normally when throttle check throws (fail-open)', async () => {
+      const errorStub = sinon.stub().rejects(new Error('Redis down'));
+      const mod = await esmock('../../src/services/manager-bot.ts', {
+        '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerStub },
+        '../../src/services/conversation-throttle.js': { checkManagerThrottle: errorStub },
+      });
+      const message = makeMessage({ chatId: 100, fromId: 42 });
+
+      await mod.handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+
+      // Fail-open: chatStream still called despite Redis error
+      expect(agentServiceStub.chatStream.calledOnce).to.be.true;
+    });
   });
 
   describe('env prompt overrides', () => {

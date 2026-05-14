@@ -49,6 +49,8 @@ const envSchema = z.object({
   MANAGER_SETTINGS_PROMPT: z.string().optional(),
   // Streaming — minimum ms between sendMessageDraft calls; 0 = no throttle (full throttle)
   STREAM_THROTTLE_MS: z.coerce.number().int().min(0).default(0),
+  REDIS_URL: z.string().default('redis://localhost:6379'),
+  MANAGER_THROTTLE_MS: z.coerce.number().int().min(0).default(5000),
 }).superRefine((data, ctx) => {
   // DEFAULT_LLM_PROVIDER key requirements
   if (data.DEFAULT_LLM_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {

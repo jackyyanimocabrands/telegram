@@ -7,6 +7,7 @@ import type { AgentService } from './agent.js';
 import type { Message } from '../types/telegram.js';
 import { splitAtSentenceBoundary } from '../utils/split-message.js';
 import { toTelegramMarkdownV2 } from '../utils/telegram-markdownv2.js';
+import { checkManagerThrottle } from './conversation-throttle.js';
 
 const TELEGRAM_USERNAME_RE = /^[a-zA-Z0-9_]{5,32}$/;
 
@@ -29,9 +30,32 @@ export async function handleManagerBotMessage(
   }
 
   logger.info(
-    { chatId, userId: from.id, from, textLength: text.length },
-    'handleManagerBotMessage: start',
+    { chatId, userId: from.id, textLength: text.length },
+    'handleManagerBotMessage: received',
   );
+  logger.trace({ chatId, userId: from.id, text }, 'handleManagerBotMessage: message text');
+
+  // Per-conversation throttle — fail-open: Redis errors allow the message through
+
+  
+  if (env.MANAGER_THROTTLE_MS > 0) {
+    logger.warn({ userId: from.id, throttleMs: env.MANAGER_THROTTLE_MS }, 'handleManagerBotMessage: checking throttle');
+    try {
+      const throttle = await checkManagerThrottle(from.id, env.MANAGER_THROTTLE_MS);
+      logger.debug({ userId: from.id, throttle }, 'handleManagerBotMessage: throttle check');
+      if (!throttle.allowed) {
+        const seconds = Math.ceil(throttle.retryAfterMs / 1000);
+        await telegram.sendMessage(
+          managerBotToken,
+          chatId,
+          `Please wait ${seconds} second${seconds !== 1 ? 's' : ''} before sending another message.`,
+        );
+        return;
+      }
+    } catch (err) {
+      logger.warn({ err, userId: from.id }, 'handleManagerBotMessage: throttle check failed, proceeding');
+    }
+  }
 
   // Sanitize first_name to prevent prompt injection via user-controlled fields
   const safeName = (from.first_name ?? 'there')
