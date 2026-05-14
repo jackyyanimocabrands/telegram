@@ -84,4 +84,28 @@ describe('toTelegramMarkdownV2', () => {
     const output = toTelegramMarkdownV2('[hello.world](https://example.com/path)');
     expect(output).to.equal('[hello\\.world](https://example.com/path)');
   });
+
+  it('converts **[text](url)** bold link atomically', () => {
+    const output = toTelegramMarkdownV2('**[click here](https://example.com)**');
+    expect(output).to.equal('*[click here](https://example.com)*');
+  });
+
+  it('bold link with URL special chars — URL is not over-escaped', () => {
+    const output = toTelegramMarkdownV2("**[Bot](https://t.me/bot?name=Jacky%27s%20Bot)**");
+    expect(output).to.equal("*[Bot](https://t.me/bot?name=Jacky%27s%20Bot)*");
+  });
+
+  it('plain link URL is not over-escaped (no ) or \\ in URL)', () => {
+    const output = toTelegramMarkdownV2('[click here](https://example.com/path_to/page.html)');
+    expect(output).to.equal('[click here](https://example.com/path_to/page.html)');
+  });
+
+  it('bold text without link still works after bold+link handler added', () => {
+    expect(toTelegramMarkdownV2('**hello world**')).to.equal('*hello world*');
+  });
+
+  it('bold and plain link on the same line both render correctly', () => {
+    const output = toTelegramMarkdownV2('**bold** and [link](https://example.com)');
+    expect(output).to.equal('*bold* and [link](https://example.com)');
+  });
 });

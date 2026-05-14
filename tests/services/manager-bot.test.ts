@@ -113,7 +113,7 @@ describe('handleManagerBotMessage', () => {
 
     expect(agentServiceStub.chatStream.calledOnce).to.be.true;
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
-    expect(systemPrompt).to.include('onboarding');
+    expect(systemPrompt).to.include('general assistant');
     expect(systemPrompt).to.include('https://t.me/newbot');
   });
 
@@ -125,7 +125,7 @@ describe('handleManagerBotMessage', () => {
 
     expect(agentServiceStub.chatStream.calledOnce).to.be.true;
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
-    expect(systemPrompt).to.include('onboarding');
+    expect(systemPrompt).to.include('general assistant');
     expect(systemPrompt).to.include('currently being set up');
   });
 
@@ -425,7 +425,7 @@ describe('handleManagerBotMessage', () => {
       await mod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
 
       const systemPrompt: string = agentEnvStub.chatStream.firstCall.args[3];
-      expect(systemPrompt).to.include('onboarding assistant for HelloMinds');
+      expect(systemPrompt).to.include('general assistant for HelloMinds');
       expect(systemPrompt).to.include('https://t.me/newbot');
     });
   });
@@ -562,7 +562,7 @@ describe('processManagerMessage', () => {
     const jobData = makeJobData();
     await processManagerMessage(jobData, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
-    expect(systemPrompt).to.include('onboarding');
+    expect(systemPrompt).to.include('general assistant');
   });
 
   it('routes to settings system prompt when bot is ACTIVE', async () => {

@@ -23,6 +23,11 @@ export function toTelegramMarkdownV2(text: string): string {
 
   // Step 3: formatting — escape inner content, save result
 
+  // Bold links: **[text](url)** → *[escapedText](escapedUrl)* (must precede both bold and link handlers)
+  text = text.replace(/\*\*\[([^\]]+)\]\(([^)]+)\)\*\*/gs, (_: string, t: string, u: string) =>
+    save(`*[${escMdV2(t)}](${escUrlMdV2(u)})*`),
+  );
+
   // Bold: **text** → *text*
   text = text.replace(/\*\*(.+?)\*\*/gs, (_: string, inner: string) =>
     save('*' + escMdV2(inner) + '*'),
@@ -45,7 +50,7 @@ export function toTelegramMarkdownV2(text: string): string {
 
   // Links: [text](url)
   text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_: string, t: string, u: string) =>
-    save(`[${escMdV2(t)}](${u})`),
+    save(`[${escMdV2(t)}](${escUrlMdV2(u)})`),
   );
 
   // Step 4: escape remaining plain text
@@ -61,4 +66,9 @@ export function toTelegramMarkdownV2(text: string): string {
 /** Escapes all 18 Telegram MarkdownV2 special characters in plain text. */
 function escMdV2(text: string): string {
   return text.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
+}
+
+/** Escapes only the characters that must be escaped inside a MarkdownV2 URL part: ) and \. */
+function escUrlMdV2(url: string): string {
+  return url.replace(/[)\\]/g, '\\$&');
 }

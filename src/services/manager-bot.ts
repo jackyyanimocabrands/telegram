@@ -6,7 +6,6 @@ import { interpolate } from '../utils/interpolate.js';
 import type { TelegramClient } from './telegram-api.js';
 import type { AgentService } from './agent.js';
 import type { Message } from '../types/telegram.js';
-import { splitAtSentenceBoundary } from '../utils/split-message.js';
 import { toTelegramMarkdownV2 } from '../utils/telegram-markdownv2.js';
 import { checkThrottle } from './conversation-throttle.js';
 import { acquireLock, releaseLock } from './conversation-lock.js';
@@ -165,12 +164,21 @@ export async function processManagerMessage(
 
       const template =
         (env.MANAGER_ONBOARDING_PROMPT && env.MANAGER_ONBOARDING_PROMPT.trim()) ||
-        `You are an onboarding assistant for HelloMinds. ` +
-        `ONLY response in short messages, reply nicely to refuse user's request for long answers or lengthy tasks. ` +
-        `ONLY response to questions about HelloMinds' platform, any other topics should be politely declined.` +
-        `Your responses cannot be more than 500 characters.` +
-        `Help the user understand what HelloMinds does and guide them to create their personal AI agent bot. ` +
-        `When the time is right, share this deep link with them: {deepLink}. ` +
+        // `You are an onboarding assistant for HelloMinds.` +
+        // `ONLY response in short messages, reply nicely to refuse user's request for long answers or lengthy tasks.` +
+        // `ONLY response to questions about HelloMinds' platform, any other topics should be politely declined.` +
+        `You are a general assistant for HelloMinds.` +
+        `HelloMinds is a platform that lets anyone create an agentic AI — called a "Mind" — in under 60 seconds. Just an email, no coding, no app, no wallet needed.` +
+        `Key features:` +
+        `- Persistent identity – each Mind has its own verified identity`+
+        `- Persistent memory – it remembers past conversations` +
+        `- Agentic – it can act on your behalf`+
+        `- Under 60 seconds setup – super fast` +
+        `ONLY response in short messages, reply nicely to refuse user's request for long answers or lengthy tasks.` +
+        `Your responses cannot be more than 1000 characters.` +
+        `Help the user understand what HelloMinds does and guide them to create their personal mind.` +
+        `When the time is right, share this deep link with them: {deepLink}, label the link "create a new mind"` +
+        `You can only work on simple tasks, and simple search, and suggest to create a mind to work on specialize task.` +
         `Be conversational, helpful, and answer any questions they have.`;
 
       systemPrompt = interpolate(template, { name: safeName, deepLink });
@@ -208,8 +216,9 @@ export async function processManagerMessage(
       }
     };
 
+    const draftId = Math.floor(Date.now() + Math.random() * 1000);
     setTimeout(() => {
-      telegram.sendMessageDraft(managerBotToken, chatId, 1, 'Thinking').catch((err: unknown) => {
+      telegram.sendMessageDraft(managerBotToken, chatId, draftId, 'Thinking').catch((err: unknown) => {
         logger.warn({ err, chatId }, 'sendMessageDraft (thinking) failed (non-fatal)');
       });
     }, 250);
@@ -217,27 +226,23 @@ export async function processManagerMessage(
     let accumulated = '';
     let lastSentAt = 0;
     const throttleMs = env.STREAM_THROTTLE_MS;
-    const draftId = Math.floor(Date.now() + Math.random() * 1000);
+    
     for await (const chunk of agentService.chatStream(managerBotId, userId, text, systemPrompt, tools)) {
       accumulated += chunk;
       const now = Date.now();
       await tryTyping();
       if (throttleMs === 0 || now - lastSentAt >= throttleMs) {
-        telegram.sendMessageDraft(managerBotToken, chatId, draftId, toTelegramMarkdownV2(accumulated), 'MarkdownV2').catch((err: unknown) => {
+        await telegram.sendMessageDraft(managerBotToken, chatId, draftId, toTelegramMarkdownV2(accumulated), 'MarkdownV2')
+        .catch((err: unknown) => {
           logger.warn({ err, chatId }, 'sendMessageDraft (stream) failed (non-fatal)');
         });
         lastSentAt = now;
       }
     }
-
-    const parts = splitAtSentenceBoundary(accumulated);
-    if (!accumulated.trim()) {
-      logger.warn({ chatId, userId }, 'processManagerMessage: empty reply from agent — skipping send');
-      return;
-    }
-    for (const part of parts) {
-      await telegram.sendMessage(managerBotToken, chatId, toTelegramMarkdownV2(part), { parse_mode: 'MarkdownV2' });
-    }
+    // const parts = splitAtSentenceBoundary(accumulated);
+    // for (const part of parts) {
+      await telegram.sendMessage(managerBotToken, chatId, toTelegramMarkdownV2(accumulated), { parse_mode: 'MarkdownV2' });
+    // }
 
     logger.debug({ chatId, userId }, 'processManagerMessage: reply sent');
   } catch (err) {
