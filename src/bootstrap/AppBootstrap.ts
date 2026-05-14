@@ -11,7 +11,8 @@ import { authRouter } from '../routes/auth.js';
 import { createWebhookRouter } from '../routes/webhook.js';
 import { botStatusRouter } from '../routes/bot-status.js';
 import { errorHandler } from '../middleware/error-handler.js';
-import { authLimiter, webhookLimiter, apiLimiter } from '../middleware/rate-limiter.js';
+import { adminRouter } from '../routes/admin.js';
+import { authLimiter, webhookLimiter, apiLimiter, adminLimiter } from '../middleware/rate-limiter.js';
 import { BotRegistry } from '../services/bot-registry.js';
 import { ManagedBotService } from '../services/managed-bot.js';
 import { createChildBotHandler } from '../services/child-bot.js';
@@ -156,6 +157,7 @@ export class AppBootstrap {
       this.app.use('/api/auth', authLimiter, authRouter);
       this.app.use('/api/bots', apiLimiter, botStatusRouter);
       this.app.use('/webhook', webhookLimiter, createWebhookRouter(this.registry));
+      this.app.use('/admin', adminLimiter, adminRouter);
       this.app.use(errorHandler);
 
       await new Promise<void>((resolve, reject) => {

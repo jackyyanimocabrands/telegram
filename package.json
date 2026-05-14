@@ -25,7 +25,8 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "db:migrate": "tsx src/db/migrate.ts",
     "set-webhook": "tsx scripts/set-webhook.ts",
-    "verify-manager": "tsx scripts/verify-manager.ts"
+    "verify-manager": "tsx scripts/verify-manager.ts",
+    "generate-api-key": "tsx scripts/generate-api-key.ts"
   },
   "dependencies": {
     "@langchain/anthropic": "^1.3.29",

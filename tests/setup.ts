@@ -17,3 +17,4 @@ process.env.LOG_LEVEL = 'fatal';
 process.env.MANAGER_UPDATE_MODE = 'polling';
 process.env.OPENAI_API_KEY = 'sk-test-openai-key';
 process.env.ANTHROPIC_API_KEY = 'sk-ant-test-anthropic-key';
+process.env.ADMIN_API_KEY = 'test-admin-key-for-testing-purposes-only-32chars';

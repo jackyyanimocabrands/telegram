@@ -30,12 +30,18 @@ const mockLlmConfig = {
 // Module loader — re-imports node functions with esmocked llm-config
 // ---------------------------------------------------------------------------
 
-async function loadAgentNodes() {
+async function loadAgentNodes(insertTokenUsageStub?: sinon.SinonStub) {
   const module = await esmock('../../src/services/agent.js', {
     '../../src/config/llm-config.js': { llmConfig: mockLlmConfig },
     '../../src/db/queries/conversations.js': {
       setConversationSystemPrompt: sinon.stub().resolves(),
       clearConversation: sinon.stub().resolves(),
+    },
+    '../../src/db/queries/token-usage.js': {
+      insertTokenUsage: insertTokenUsageStub ?? sinon.stub().resolves(),
+    },
+    '../../src/db/client.js': {
+      pool: {},
     },
   });
   return {
@@ -465,6 +471,139 @@ describe('saveNode', () => {
     const state = makeSaveState();
 
     const result = await saveNode(state, { conversationService: convSvc as any });
+
+    expect(result).to.deep.equal({});
+  });
+
+  // ── token usage fire-and-forget ────────────────────────────────────────────
+
+  it('calls insertTokenUsage with usageType "chat" when chatUsage is present', async () => {
+    const insertStub = sinon.stub().resolves();
+    const { saveNode } = await loadAgentNodes(insertStub);
+    const convSvc = makeConvService();
+    const state = makeState({
+      messages: [new HumanMessage('hi'), new AIMessage('hello')],
+      summary: '',
+      botId: 'testbot',
+      userId: 123,
+      provider: 'openai',
+      model: 'gpt-4o',
+      summarizationProvider: 'openai',
+      summarizationModel: 'gpt-4o-mini',
+      chatUsage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
+      summarizationUsage: null,
+    });
+
+    await saveNode(state, { conversationService: convSvc as any });
+    // Flush microtask queue for fire-and-forget promises
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(insertStub.called).to.be.true;
+    const callArgs = insertStub.getCalls().find(c => c.args[1]?.usageType === 'chat');
+    expect(callArgs).to.exist;
+    expect(callArgs!.args[1].usageType).to.equal('chat');
+    expect(callArgs!.args[1].inputTokens).to.equal(10);
+    expect(callArgs!.args[1].outputTokens).to.equal(20);
+    expect(callArgs!.args[1].totalTokens).to.equal(30);
+    expect(callArgs!.args[1]).to.include({ botId: 'testbot', telegramUserId: 123 });
+  });
+
+  it('calls insertTokenUsage with usageType "summarization" when summarizationUsage is present', async () => {
+    const insertStub = sinon.stub().resolves();
+    const { saveNode } = await loadAgentNodes(insertStub);
+    const convSvc = makeConvService();
+    const state = makeState({
+      messages: [new HumanMessage('hi'), new AIMessage('hello')],
+      summary: '',
+      botId: 'testbot',
+      userId: 123,
+      provider: 'openai',
+      model: 'gpt-4o',
+      summarizationProvider: 'openai',
+      summarizationModel: 'gpt-4o-mini',
+      chatUsage: null,
+      summarizationUsage: { input_tokens: 5, output_tokens: 15, total_tokens: 20 },
+    });
+
+    await saveNode(state, { conversationService: convSvc as any });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(insertStub.called).to.be.true;
+    const callArgs = insertStub.getCalls().find(c => c.args[1]?.usageType === 'summarization');
+    expect(callArgs).to.exist;
+    expect(callArgs!.args[1].usageType).to.equal('summarization');
+    expect(callArgs!.args[1]).to.include({ botId: 'testbot', telegramUserId: 123 });
+  });
+
+  it('calls insertTokenUsage twice when both chatUsage and summarizationUsage are present', async () => {
+    const insertStub = sinon.stub().resolves();
+    const { saveNode } = await loadAgentNodes(insertStub);
+    const convSvc = makeConvService();
+    const state = makeState({
+      messages: [new HumanMessage('hi'), new AIMessage('hello')],
+      summary: '',
+      botId: 'testbot',
+      userId: 123,
+      provider: 'openai',
+      model: 'gpt-4o',
+      summarizationProvider: 'openai',
+      summarizationModel: 'gpt-4o-mini',
+      chatUsage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
+      summarizationUsage: { input_tokens: 5, output_tokens: 15, total_tokens: 20 },
+    });
+
+    await saveNode(state, { conversationService: convSvc as any });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(insertStub.callCount).to.equal(2);
+    const usageTypes = insertStub.getCalls().map(c => c.args[1]?.usageType);
+    expect(usageTypes).to.include('chat');
+    expect(usageTypes).to.include('summarization');
+    insertStub.getCalls().forEach(c => {
+      expect(c.args[1]).to.include({ botId: 'testbot', telegramUserId: 123 });
+    });
+  });
+
+  it('does not call insertTokenUsage when both chatUsage and summarizationUsage are null', async () => {
+    const insertStub = sinon.stub().resolves();
+    const { saveNode } = await loadAgentNodes(insertStub);
+    const convSvc = makeConvService();
+    const state = makeState({
+      messages: [new HumanMessage('hi'), new AIMessage('hello')],
+      summary: '',
+      botId: 'testbot',
+      userId: 123,
+      chatUsage: null,
+      summarizationUsage: null,
+    });
+
+    await saveNode(state, { conversationService: convSvc as any });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(insertStub.called).to.be.false;
+  });
+
+  it('saveNode still resolves when insertTokenUsage rejects (error swallowed)', async () => {
+    const insertStub = sinon.stub().rejects(new Error('DB write failed'));
+    const { saveNode } = await loadAgentNodes(insertStub);
+    const convSvc = makeConvService();
+    const state = makeState({
+      messages: [new HumanMessage('hi'), new AIMessage('hello')],
+      summary: '',
+      botId: 'testbot',
+      userId: 123,
+      chatUsage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
+      summarizationUsage: null,
+    });
+
+    // Must not throw
+    const result = await saveNode(state, { conversationService: convSvc as any });
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(result).to.deep.equal({});
   });

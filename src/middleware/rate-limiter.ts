@@ -37,3 +37,17 @@ export const webhookLimiter = rateLimit({
     res.status(429).json({ ok: false, error: 'Too many webhook requests', code: 'RATE_LIMITED' });
   },
 });
+
+// TODO: For multi-process deployments, replace MemoryStore with a Redis-backed store
+// (e.g. rate-limit-redis) to enforce limits across all instances.
+export const adminLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 15,                    // 15 req / 15 min per IP — strict for admin
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests' },
+  handler: (req: Request, res: Response) => {
+    logger.warn({ ip: req.ip, path: req.path }, 'Rate limit hit: admin');
+    res.status(429).json({ error: 'Too many requests' });
+  },
+});

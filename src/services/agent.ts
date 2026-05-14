@@ -4,6 +4,7 @@ import {
   SystemMessage,
   BaseMessage,
   RemoveMessage,
+  type UsageMetadata,
 } from '@langchain/core/messages';
 import {
   StateGraph,
@@ -19,6 +20,8 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { getModelConfig } from './llm/model-registry.js';
 import { estimateTokens } from './llm/token-estimator.js';
 import { setConversationSystemPrompt } from '../db/queries/conversations.js';
+import { insertTokenUsage } from '../db/queries/token-usage.js';
+import { pool } from '../db/client.js';
 
 /**
  * Strips unsafe fields (e.g. Authorization headers embedded by LangChain HTTP errors)
@@ -90,6 +93,14 @@ const AgentStateAnnotation = Annotation.Root({
   forceSummarize: Annotation<boolean>({
     reducer: (_a: boolean, b: boolean) => b,
     default: () => false,
+  }),
+  chatUsage: Annotation<UsageMetadata | null>({
+    reducer: (_a: UsageMetadata | null, b: UsageMetadata | null) => b,
+    default: () => null,
+  }),
+  summarizationUsage: Annotation<UsageMetadata | null>({
+    reducer: (_a: UsageMetadata | null, b: UsageMetadata | null) => b,
+    default: () => null,
   }),
 });
 
@@ -192,10 +203,12 @@ export async function agentNode(
         { provider: slot.provider, model: slot.model, attemptIndex: i, contentLength: String(aiMessage.content).length },
         'agentNode: got reply',
       );
+      const chatUsage = aiMessage.usage_metadata ?? null;
       return {
         messages: [aiMessage],
         provider: slot.provider,
         model: slot.model,
+        chatUsage,
       };
     } catch (err) {
       lastErr = err;
@@ -365,6 +378,7 @@ export async function summarizeNode(
       summary: newSummaryText,
       summarizationProvider: usedSlot.provider,
       summarizationModel: usedSlot.model,
+      summarizationUsage: summaryResult.usage_metadata ?? null,
     };
   } catch (err) {
     logger.warn({ err: sanitizeLlmError(err) }, 'summarizeNode: summarization failed, continuing without update');
@@ -415,6 +429,33 @@ export async function saveNode(
     { botId: state.botId, userId: state.userId, messageCount: conversationMessages.length },
     'saveNode: conversation persisted',
   );
+
+  // Fire-and-forget token usage recording — failures are non-fatal
+  if (state.chatUsage) {
+    insertTokenUsage(pool, {
+      botId: state.botId,
+      telegramUserId: state.userId,
+      provider: state.provider,
+      model: state.model,
+      usageType: 'chat',
+      inputTokens: state.chatUsage.input_tokens,
+      outputTokens: state.chatUsage.output_tokens,
+      totalTokens: state.chatUsage.total_tokens,
+    }).catch((err: unknown) => logger.warn({ err }, 'saveNode: failed to record chat token usage'));
+  }
+
+  if (state.summarizationUsage) {
+    insertTokenUsage(pool, {
+      botId: state.botId,
+      telegramUserId: state.userId,
+      provider: state.summarizationProvider,
+      model: state.summarizationModel,
+      usageType: 'summarization',
+      inputTokens: state.summarizationUsage.input_tokens,
+      outputTokens: state.summarizationUsage.output_tokens,
+      totalTokens: state.summarizationUsage.total_tokens,
+    }).catch((err: unknown) => logger.warn({ err }, 'saveNode: failed to record summarization token usage'));
+  }
 
   return {};
 }

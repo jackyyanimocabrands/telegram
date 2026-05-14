@@ -50,6 +50,7 @@ const envSchema = z.object({
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).default(4),
   JOB_RETENTION_HOURS: z.coerce.number().int().min(0).default(24),
   LOCK_TTL_SECS: z.coerce.number().int().min(10).default(60),
+  ADMIN_API_KEY: z.string().min(32),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -61,6 +62,7 @@ if (!parsed.success) {
     'ENCRYPTION_MASTER_KEY', 'ES256_PRIVATE_KEY', 'ES256_PUBLIC_KEY',
     'BOT_TOKEN', 'BOT_USERNAME', 'WEBHOOK_SECRET', 'CHILD_WEBHOOK_SECRET',
     'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'OPENROUTER_API_KEY',
+    'ADMIN_API_KEY',
   ]);
   const errors = parsed.error.flatten().fieldErrors;
   const redacted = Object.fromEntries(
