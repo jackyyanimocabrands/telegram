@@ -1,0 +1,50 @@
+meta {
+  name: Get Token Usage by Bot
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/admin/token-usage/bot/:botId
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{adminApiKey}}
+}
+
+params:path {
+  botId: your-bot-id
+}
+
+params:query {
+  ~from: 2026-01-01T00:00:00Z
+  ~to: 2026-12-31T23:59:59Z
+  ~limit: 100
+}
+
+docs {
+  Returns raw token usage rows for all users of a given bot,
+  ordered newest-first.
+
+  Path params:
+  - botId   string  — the bot's internal ID
+
+  Optional query params:
+  - from    ISO date string
+  - to      ISO date string
+  - limit   integer 1–5000 (default: 1000)
+
+  Response fields per row:
+  - id                 UUID
+  - bot_id             string
+  - telegram_user_id   string
+  - provider           string
+  - model              string
+  - usage_type         "chat" | "summarization"
+  - input_tokens       number
+  - output_tokens      number
+  - total_tokens       number
+  - created_at         ISO timestamp
+}

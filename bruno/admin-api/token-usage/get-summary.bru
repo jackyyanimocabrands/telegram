@@ -1,0 +1,38 @@
+meta {
+  name: Get Token Usage Summary
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/admin/token-usage/summary
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{adminApiKey}}
+}
+
+params:query {
+  ~provider: deepseek
+  ~model: deepseek-chat
+  ~from: 2026-01-01T00:00:00Z
+  ~to: 2026-12-31T23:59:59Z
+}
+
+docs {
+  Returns LLM token usage aggregated by (provider, model, usage_type).
+
+  Defaults to the last 90 days when no date filter is provided.
+  All query params are optional — enable them with the checkbox.
+
+  Response fields:
+  - provider          string
+  - model             string
+  - usage_type        "chat" | "summarization"
+  - total_input_tokens  string (bigint)
+  - total_output_tokens string (bigint)
+  - sum_total_tokens    string (bigint)
+  - call_count          string (bigint)
+}
