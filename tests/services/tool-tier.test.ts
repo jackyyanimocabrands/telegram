@@ -48,8 +48,8 @@ describe('tool-tier', () => {
   beforeEach(() => {
     createCreateBotToolStub = sinon.stub().returns(makeTool('create_bot'));
     createConfigureBotToolStub = sinon.stub().returns(makeTool('configure_bot'));
-    createWebsearchToolStub = sinon.stub().returns(makeTool('websearch'));
-    createWebfetchToolStub = sinon.stub().returns(makeTool('webfetch'));
+    createWebsearchToolStub = sinon.stub().returns(makeTool('web_search'));
+    createWebfetchToolStub = sinon.stub().returns(makeTool('web_fetch'));
   });
 
   afterEach(async () => {
@@ -96,10 +96,11 @@ describe('tool-tier', () => {
       userId: '42',
     };
 
-    it('returns empty array for "base" tier', async () => {
+    it('returns array of length 2 with web_fetch and web_search for "base" tier', async () => {
       const { getToolsForTier } = await buildModule();
       const tools = getToolsForTier('base', deps);
-      expect(tools).to.be.an('array').with.length(0);
+      expect(tools).to.be.an('array').with.length(2);
+      expect(tools.map((t: StructuredTool) => t.name)).to.deep.equal(['web_fetch', 'web_search']);
     });
 
     it('returns exactly 4 tools for "authenticated" tier', async () => {
@@ -108,14 +109,14 @@ describe('tool-tier', () => {
       expect(tools).to.be.an('array').with.length(4);
     });
 
-    it('authenticated tools have correct names in order: create_bot, configure_bot, websearch, webfetch', async () => {
+    it('authenticated tools have correct names in order: create_bot, configure_bot, web_fetch, web_search', async () => {
       const { getToolsForTier } = await buildModule();
       const tools = getToolsForTier('authenticated', deps);
       expect(tools.map((t: StructuredTool) => t.name)).to.deep.equal([
         'create_bot',
         'configure_bot',
-        'websearch',
-        'webfetch',
+        'web_fetch',
+        'web_search',
       ]);
     });
 
@@ -131,13 +132,13 @@ describe('tool-tier', () => {
       expect(createConfigureBotToolStub.calledWith(deps.userEmail)).to.be.true;
     });
 
-    it('does not call any tool factory for "base" tier', async () => {
+    it('does not call bot management tool factories for "base" tier', async () => {
       const { getToolsForTier } = await buildModule();
       getToolsForTier('base', deps);
       expect(createCreateBotToolStub.called).to.be.false;
       expect(createConfigureBotToolStub.called).to.be.false;
-      expect(createWebsearchToolStub.called).to.be.false;
-      expect(createWebfetchToolStub.called).to.be.false;
+      expect(createWebsearchToolStub.called).to.be.true;
+      expect(createWebfetchToolStub.called).to.be.true;
     });
   });
 });

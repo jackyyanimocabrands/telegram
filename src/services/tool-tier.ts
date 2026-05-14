@@ -47,19 +47,23 @@ export function resolveToolTier(toolsetState: ToolsetState): ToolTier {
 /**
  * Returns the tools available for the given tier.
  *
- * base          → [] (no tools)
- * authenticated → [createBot, configureBot, websearch, webfetch]
+ * base          → [webfetch, websearch]
+ * authenticated → [createBot, configureBot, webfetch, websearch]
  */
 export function getToolsForTier(tier: ToolTier, deps: ToolDeps): StructuredTool[] {
+  const sharedTools = [
+    createWebfetchTool({ botId: deps.botId, userId: deps.userId, redisClient: deps.redisClient }),
+    createWebsearchTool(),
+  ];
+
   if (tier === 'base') {
-    return [];
+    return sharedTools;
   }
 
   // authenticated
   return [
     createCreateBotTool(deps.userEmail),
     createConfigureBotTool(deps.userEmail),
-    createWebsearchTool(),
-    createWebfetchTool({ botId: deps.botId, userId: deps.userId, redisClient: deps.redisClient }),
+    ...sharedTools,
   ];
 }
