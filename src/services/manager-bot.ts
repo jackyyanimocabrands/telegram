@@ -86,6 +86,7 @@ export async function enqueueManagerMessage(
         text,
         firstName: from.first_name ?? '',
         username: from.username,
+        languageCode: from.language_code,
       },
       { jobId: `msg-${message.message_id}` },
     );
@@ -114,7 +115,7 @@ export async function processManagerMessage(
   _baseUrl: string,
   botUsername: string,
 ): Promise<void> {
-  const { chatId, userId, text, firstName, username, conversationId } = jobData;
+  const { chatId, userId, text, firstName, username, conversationId, languageCode } = jobData;
 
   logger.info({ chatId, userId, conversationId }, 'processManagerMessage: start');
 
@@ -137,6 +138,11 @@ export async function processManagerMessage(
     // PII WARNING: toolsetState may contain email and email_verified.
     // Do NOT log this object. Only projected fields (timezone, locale) are forwarded to plugins.
     let toolsetState: Record<string, unknown> = toolsetStateResult;
+
+    // Always use the Telegram-supplied language_code as locale — no DB storage needed.
+    if (languageCode) {
+      toolsetState = { ...toolsetState, locale: languageCode };
+    }
 
     // Resolve tool tier for this user and load the appropriate tools
     // B5: downgrade to base if authenticated tier but email is absent/empty

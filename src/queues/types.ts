@@ -6,6 +6,7 @@ export interface ManagerMessageJobData {
   text: string;
   firstName: string;
   username?: string;
+  languageCode?: string;
 }
 
 export interface EmailVerificationNotificationJobData {
