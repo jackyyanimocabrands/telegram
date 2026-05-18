@@ -32,6 +32,8 @@ describe('createCreateBotTool', () => {
     expect(mockClient.createBot.firstCall.args[0]).to.equal('user@example.com');
     expect(mockClient.createBot.firstCall.args[1]).to.deep.equal({
       name: 'My Bot',
+      username: undefined,
+      botToken: undefined,
       description: 'A test bot',
       systemPrompt: undefined,
     });

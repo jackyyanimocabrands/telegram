@@ -18,6 +18,8 @@ export function createCreateBotTool(
       try {
         const result = await client.createBot(userEmail, {
           name: input.name,
+          username: input.username,
+          botToken: input.botToken,
           description: input.description,
           systemPrompt: input.systemPrompt,
         });
@@ -31,7 +33,9 @@ export function createCreateBotTool(
       description:
         'Create a new Telegram bot via the bot management service. Requires email-verified user.',
       schema: z.object({
-        name: z.string(),
+        name: z.string().describe('Display name of the Mind.'),
+        username: z.string().optional().describe('Telegram bot username (must end in _bot).'),
+        botToken: z.string().optional().describe('Telegram bot token obtained from BotFather.'),
         description: z.string().optional(),
         systemPrompt: z.string().optional(),
       }),

@@ -8,6 +8,7 @@ import {
   createWebfetchTool,
   createVerifyEmailTool,
   createClearEmailVerificationTool,
+  createCheckBotUsernameTool,
 } from './tools/index.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -51,8 +52,8 @@ export function resolveToolTier(toolsetState: ToolsetState): ToolTier {
 /**
  * Returns the tools available for the given tier.
  *
- * base          → [verify_email, web_fetch, web_search]
- * authenticated → [clear_email_verification, create_bot, configure_bot, web_fetch, web_search]
+ * base          → [verify_email, check_bot_username, web_fetch, web_search]
+ * authenticated → [clear_email_verification, create_bot, configure_bot, check_bot_username, web_fetch, web_search]
  */
 export function getToolsForTier(tier: ToolTier, deps: ToolDeps): StructuredTool[] {
   const sharedTools = [
@@ -63,6 +64,7 @@ export function getToolsForTier(tier: ToolTier, deps: ToolDeps): StructuredTool[
   if (tier === 'base') {
     return [
       createVerifyEmailTool(deps.botId, deps.userId),
+      createCheckBotUsernameTool(deps.botId, deps.userId),
       ...sharedTools,
     ];
   }
@@ -72,6 +74,7 @@ export function getToolsForTier(tier: ToolTier, deps: ToolDeps): StructuredTool[
     createClearEmailVerificationTool(deps.botId, deps.userId, deps.pool),
     createCreateBotTool(deps.userEmail, undefined, deps.botId, deps.userId),
     createConfigureBotTool(deps.userEmail, undefined, deps.botId, deps.userId),
+    createCheckBotUsernameTool(deps.botId, deps.userId),
     ...sharedTools,
   ];
 }

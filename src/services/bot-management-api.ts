@@ -3,6 +3,8 @@ import { logger } from '../utils/logger.js';
 
 export interface CreateBotParams {
   name: string;
+  username?: string;
+  botToken?: string;
   description?: string;
   systemPrompt?: string;
 }

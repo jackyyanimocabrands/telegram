@@ -32,6 +32,7 @@ let createWebsearchToolStub: sinon.SinonStub;
 let createWebfetchToolStub: sinon.SinonStub;
 let createVerifyEmailToolStub: sinon.SinonStub;
 let createClearEmailVerificationToolStub: sinon.SinonStub;
+let createCheckBotUsernameToolStub: sinon.SinonStub;
 
 async function buildModule() {
   return esmock('../../src/services/tool-tier.ts', {
@@ -42,6 +43,7 @@ async function buildModule() {
       createWebfetchTool: createWebfetchToolStub,
       createVerifyEmailTool: createVerifyEmailToolStub,
       createClearEmailVerificationTool: createClearEmailVerificationToolStub,
+      createCheckBotUsernameTool: createCheckBotUsernameToolStub,
     },
   });
 }
@@ -56,6 +58,7 @@ describe('tool-tier', () => {
     createWebfetchToolStub = sinon.stub().returns(makeTool('web_fetch'));
     createVerifyEmailToolStub = sinon.stub().returns(makeTool('verify_email'));
     createClearEmailVerificationToolStub = sinon.stub().returns(makeTool('clear_email_verification'));
+    createCheckBotUsernameToolStub = sinon.stub().returns(makeTool('check_bot_username'));
   });
 
   afterEach(async () => {
@@ -102,29 +105,31 @@ describe('tool-tier', () => {
       userId: '42',
     };
 
-    it('returns array of length 3 for "base" tier (verify_email, web_fetch, web_search)', async () => {
+    it('returns array of length 4 for "base" tier (verify_email, check_bot_username, web_fetch, web_search)', async () => {
       const { getToolsForTier } = await buildModule();
       const tools = getToolsForTier('base', deps);
-      expect(tools).to.be.an('array').with.length(3);
+      expect(tools).to.be.an('array').with.length(4);
       const names = tools.map((t: StructuredTool) => t.name);
       expect(names).to.include('verify_email');
+      expect(names).to.include('check_bot_username');
       expect(names).to.include('web_fetch');
       expect(names).to.include('web_search');
     });
 
-    it('returns exactly 5 tools for "authenticated" tier', async () => {
+    it('returns exactly 6 tools for "authenticated" tier', async () => {
       const { getToolsForTier } = await buildModule();
       const tools = getToolsForTier('authenticated', deps);
-      expect(tools).to.be.an('array').with.length(5);
+      expect(tools).to.be.an('array').with.length(6);
     });
 
-    it('authenticated tools include clear_email_verification, create_bot, configure_bot, web_fetch, web_search', async () => {
+    it('authenticated tools include clear_email_verification, create_bot, configure_bot, check_bot_username, web_fetch, web_search', async () => {
       const { getToolsForTier } = await buildModule();
       const tools = getToolsForTier('authenticated', deps);
       const names = tools.map((t: StructuredTool) => t.name);
       expect(names).to.include('clear_email_verification');
       expect(names).to.include('create_bot');
       expect(names).to.include('configure_bot');
+      expect(names).to.include('check_bot_username');
       expect(names).to.include('web_fetch');
       expect(names).to.include('web_search');
     });

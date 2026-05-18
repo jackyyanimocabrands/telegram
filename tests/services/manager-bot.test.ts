@@ -112,7 +112,7 @@ describe('handleManagerBotMessage', () => {
     expect(agentServiceStub.chatStream.calledOnce).to.be.true;
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
     expect(systemPrompt).to.include('general assistant for HelloMinds');
-    expect(systemPrompt).to.include('https://t.me/newbot');
+    expect(systemPrompt).to.include('verify_email');
   });
 
   it('routes to onboarding prompt when bot status is PENDING', async () => {
@@ -124,7 +124,7 @@ describe('handleManagerBotMessage', () => {
     expect(agentServiceStub.chatStream.calledOnce).to.be.true;
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
     expect(systemPrompt).to.include('general assistant for HelloMinds');
-    expect(systemPrompt).to.include('https://t.me/newbot');
+    expect(systemPrompt).to.include('verify_email');
   });
 
   it('routes to onboarding prompt when bot status is PROVISIONING', async () => {
@@ -135,7 +135,7 @@ describe('handleManagerBotMessage', () => {
 
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
     expect(systemPrompt).to.include('general assistant for HelloMinds');
-    expect(systemPrompt).to.include('https://t.me/newbot');
+    expect(systemPrompt).to.include('verify_email');
   });
 
   it('routes to management prompt when tier is authenticated and bot status is ACTIVE', async () => {
@@ -371,13 +371,13 @@ describe('handleManagerBotMessage', () => {
       await esmock.purge();
     });
 
-    it('uses MANAGER_ONBOARDING_PROMPT template and interpolates {deepLink}', async () => {
+    it('uses MANAGER_ONBOARDING_PROMPT template and interpolates {name}', async () => {
       findManagedBotByOwnerEnvStub.resolves(null);
 
       const mod = await esmock('../../src/services/manager-bot.ts', {
         '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerEnvStub },
         '../../src/config/env.js': {
-          env: { MANAGER_ONBOARDING_PROMPT: 'Custom onboarding. Link: {deepLink}' },
+          env: { MANAGER_ONBOARDING_PROMPT: 'Custom onboarding for {name}. Ask what you can help with.' },
         },
         '../../src/utils/interpolate.js': { interpolate: (t: string, v: Record<string, string>) => t.replace(/\{([^}]+)\}/g, (m: string, k: string) => v[k] ?? m) },
         '../../src/services/conversation-throttle.js': { checkThrottle: sinon.stub().resolves({ allowed: true, retryAfterMs: 0 }) },
@@ -397,8 +397,8 @@ describe('handleManagerBotMessage', () => {
 
       const systemPrompt: string = agentEnvStub.chatStream.firstCall.args[3];
       expect(systemPrompt).to.include('Custom onboarding');
-      expect(systemPrompt).to.include('https://t.me/newbot');
-      expect(systemPrompt).not.to.include('{deepLink}');
+      expect(systemPrompt).to.include('Alice');
+      expect(systemPrompt).not.to.include('{name}');
     });
 
     it('uses MANAGER_SETTINGS_PROMPT template and interpolates {name} and {botUsername}', async () => {
@@ -460,7 +460,8 @@ describe('handleManagerBotMessage', () => {
 
       const systemPrompt: string = agentEnvStub.chatStream.firstCall.args[3];
       expect(systemPrompt).to.include('general assistant for HelloMinds');
-      expect(systemPrompt).to.include('https://t.me/newbot');
+      expect(systemPrompt).to.include('verify_email');
+      expect(systemPrompt).not.to.include('https://t.me/newbot');
     });
   });
 });
@@ -597,6 +598,7 @@ describe('processManagerMessage', () => {
     await processManagerMessage(jobData, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
     expect(systemPrompt).to.include('general assistant for HelloMinds');
+    expect(systemPrompt).not.to.include('https://t.me/newbot');
   });
 
   it('routes to management system prompt when tier is authenticated and bot is ACTIVE', async () => {

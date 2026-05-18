@@ -15,6 +15,7 @@ import type { Queue } from 'bullmq';
 import type { ManagerMessageJobData } from '../queues/types.js';
 
 const TELEGRAM_USERNAME_RE = /^[a-zA-Z0-9_]{5,32}$/;
+void TELEGRAM_USERNAME_RE; // reserved for future use
 
 /**
  * Webhook-facing function. Checks throttle + lock gate, enqueues the job,
@@ -113,9 +114,9 @@ export async function processManagerMessage(
   managerBotToken: string,
   managerBotId: string,
   _baseUrl: string,
-  botUsername: string,
+  _botUsername: string,
 ): Promise<void> {
-  const { chatId, userId, text, firstName, username, conversationId, languageCode } = jobData;
+  const { chatId, userId, text, firstName, conversationId, languageCode } = jobData;
 
   logger.info({ chatId, userId, conversationId }, 'processManagerMessage: start');
 
@@ -123,8 +124,6 @@ export async function processManagerMessage(
     .replace(/[^a-zA-Z0-9 \-']/g, '')
     .slice(0, 50)
     .trim() || 'there';
-
-  const safeUsername = username && TELEGRAM_USERNAME_RE.test(username) ? username : null;
 
   try {
     const [managedBot, toolsetStateResult] = await Promise.all([
@@ -175,40 +174,51 @@ export async function processManagerMessage(
         (env.MANAGER_SETTINGS_PROMPT && env.MANAGER_SETTINGS_PROMPT.trim()) ||
         `You are the HelloMinds assistant for {name}.
 
-The user is verified. {botContext}
+The user is verified and ready to create their Mind.
+{botContext}
 
-You can help with general questions and web lookups. Use the tools available to help create or configure their Mind.
+Guide the user through this exact sequence — one step at a time:
+
+STEP 1 — Choose a Mind type
+Present these options and ask the user to pick the one closest to their task:
+- General Assistant: everyday tasks, Q&A, productivity
+- Research: deep research, summarisation, analysis
+- Customer Support: answering questions, handling requests
+- Coding: writing, reviewing, and debugging code
+- Writing: drafting, editing, creative and professional writing
+
+Wait for the user to confirm before moving on.
+
+STEP 2 — Name the Mind
+Suggest 3 creative names relevant to the chosen type. For each name, call check_bot_username to confirm it is available before suggesting it. Only suggest available names.
+Usernames must end in _bot, be 5–32 characters, alphanumeric and underscores only.
+
+Wait for the user to choose or propose a name. Verify any user-proposed name with check_bot_username before accepting it.
+
+STEP 3 — Create the Mind
+Once a name is confirmed:
+1. Tell the user to open @BotFather on Telegram and type /newbot
+2. When BotFather asks for a name, use the confirmed display name
+3. When BotFather asks for a username, enter the confirmed username exactly
+4. Ask the user to copy the bot token BotFather provides and share it here
+
+Once the user provides the token, call create_bot with the confirmed name, username, and token.
 
 Keep all replies short and direct. Politely decline anything unrelated to HelloMinds.`;
 
       systemPrompt = interpolate(template, { name: safeName, botContext, botUsername: managedBot?.bot_username ?? '' });
     } else {
-      const suggestedUsername = safeUsername
-        ? `${safeUsername}_ai_bot`
-        : `user${userId}_bot`;
-      const deepLink =
-        `https://t.me/newbot/${botUsername}/${suggestedUsername}` +
-        `?name=${encodeURIComponent(`${safeName}'s Bot`)}`;
-
       const template =
         (env.MANAGER_ONBOARDING_PROMPT && env.MANAGER_ONBOARDING_PROMPT.trim()) ||
-        `You are a friendly general assistant for HelloMinds, here to help {name}.
-
+        `You are a friendly helpful general assistant for HelloMinds, here to help {name}.
 Start by asking what you can help them with today.
-
 You can handle simple tasks: answering questions, looking things up, searching the web. Use the web_search and web_fetch tools when needed.
-
 When a task is too complex for a general assistant — something that needs memory, autonomy, ongoing work, or specialised capability — suggest that the user creates their own Mind.
-
-A Mind is a personal AI agent with its own identity, persistent memory, and the ability to act on the user's behalf. It takes under 60 seconds to create with just an email address.
-
+A Mind is a personal AI agent with its own identity, persistent memory, and the ability to act on the user's behalf. It takes under 60 seconds to create.
 When a complex task comes up, say something like: "This sounds like something a dedicated Mind could handle much better. Would you like to create one? It only takes 60 seconds — I just need your email to get started."
-
-Once the user agrees and provides their email, use the verify_email tool to begin the process. When the time is right, share this link: {deepLink}
-
+Once the user agrees and provides their email, use the verify_email tool to begin the process.
 Keep all replies short and conversational. Politely decline anything unrelated to HelloMinds or general assistance.`;
-
-      systemPrompt = interpolate(template, { name: safeName, deepLink });
+      systemPrompt = interpolate(template, { name: safeName });
     }
 
     const TYPING_REFRESH_MS = 4000;
