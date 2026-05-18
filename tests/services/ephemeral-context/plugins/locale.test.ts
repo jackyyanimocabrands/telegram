@@ -80,16 +80,16 @@ describe('localePlugin', () => {
   });
 
   // ── build() — locale only (no timezone) ───────────────────────────────────
-  // Per spec: timezone is required. Without it, return null regardless of locale.
 
-  it('build() with only locale (no timezone) returns null (timezone required for meaningful output)', async () => {
+  it('build() with only locale (no timezone) returns a language string', async () => {
     const localePlugin = await loadLocalePlugin();
     const result = localePlugin.build({
       botId: 'b', userId: '1',
       toolsetState: { locale: 'fr-FR' },
       getNow,
     });
-    expect(result).to.be.null;
+    expect(result).to.be.a('string');
+    expect(result as string).to.include("User's language:");
   });
 
   // ── build() — neither ─────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ describe('localePlugin', () => {
 
   // ── build() — invalid locale string (B8) ─────────────────────────────────
 
-  it('build() with invalid BCP-47 locale "!@@##invalid" returns null without throwing', async () => {
+  it('build() with invalid BCP-47 locale "!@@##invalid" and valid timezone returns datetime output without throwing', async () => {
     const localePlugin = await loadLocalePlugin();
     let result: string | null | undefined;
     expect(() => {
@@ -142,10 +142,11 @@ describe('localePlugin', () => {
       });
     }).to.not.throw();
     if (result instanceof Promise) result = await result;
-    expect(result).to.be.null;
+    expect(result).to.be.a('string');
+    expect(result as string).to.include("User's local date and time:");
   });
 
-  it('build() with invalid BCP-47 locale "!invalid!" returns null without throwing', async () => {
+  it('build() with invalid BCP-47 locale "!invalid!" and valid timezone returns datetime output without throwing', async () => {
     const localePlugin = await loadLocalePlugin();
     let result: string | null | undefined;
     expect(() => {
@@ -156,7 +157,8 @@ describe('localePlugin', () => {
       });
     }).to.not.throw();
     if (result instanceof Promise) result = await result;
-    expect(result).to.be.null;
+    expect(result).to.be.a('string');
+    expect(result as string).to.include("User's local date and time:");
   });
 
   // ── build() — non-string timezone ─────────────────────────────────────────

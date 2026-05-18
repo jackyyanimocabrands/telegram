@@ -3,78 +3,93 @@ import type { EphemeralContextPlugin } from '../types.js';
 
 /**
  * Locale/timezone plugin.
- * Reads toolsetState.timezone and toolsetState.locale.
+ * Reads toolsetState.locale (BCP-47 tag from Telegram language_code) and
+ * toolsetState.timezone (IANA timezone string, optional).
  *
- * Requires `timezone` to produce output — without a timezone we cannot produce
- * a meaningful local date/time string. `locale` only controls formatting.
- * Returns null gracefully if timezone is absent, invalid, or not in
- * Intl.supportedValuesOf('timeZone').
+ * Behaviour:
+ *  - locale present → outputs "User's language: <display name> (<code>)"
+ *  - locale + timezone present → also outputs "User's local date and time: <formatted>"
+ *  - neither present → returns null
  *
  * Validates both values before use:
- *  - timezone: must be in Intl.supportedValuesOf('timeZone')
- *  - locale: validated via Intl.getCanonicalLocales() — invalid BCP-47 tags return null
+ *  - locale: validated via Intl.getCanonicalLocales() — invalid BCP-47 tags are skipped
+ *  - timezone: must be in Intl.supportedValuesOf('timeZone') or UTC/GMT
  *
- * Uses Intl.DateTimeFormat — no external dependency.
+ * Uses Intl.DateTimeFormat / Intl.DisplayNames — no external dependency.
  */
 export const localePlugin: EphemeralContextPlugin = {
   name: 'locale',
   enabled: (env) => env.EPHEMERAL_CONTEXT_LOCALE_ENABLED,
   build: ({ toolsetState, getNow }) => {
-    const timezone = typeof toolsetState.timezone === 'string' && toolsetState.timezone.trim()
+    const rawLocale = typeof toolsetState.locale === 'string' && toolsetState.locale.trim()
+      ? toolsetState.locale.trim()
+      : null;
+    const rawTimezone = typeof toolsetState.timezone === 'string' && toolsetState.timezone.trim()
       ? toolsetState.timezone.trim()
       : null;
-    const locale = typeof toolsetState.locale === 'string' && toolsetState.locale.trim()
-      ? toolsetState.locale.trim()
-      : undefined; // Intl accepts undefined = default locale
 
-    // timezone is required — without it we cannot produce a meaningful local time
-    if (timezone === null) return null;
+    // Nothing to output if both are absent
+    if (rawLocale === null && rawTimezone === null) return null;
 
-    // Validate timezone against the allowlist — prevents adversarial inputs.
-    // UTC and GMT are valid IANA timezones accepted by Intl.DateTimeFormat but are
-    // NOT returned by Intl.supportedValuesOf('timeZone') on all Node builds/ICU configs,
-    // so they are explicitly allowed here as a safe-listed exception.
-    try {
-      const supported = Intl.supportedValuesOf('timeZone');
-      if (!supported.includes(timezone) && timezone !== 'UTC' && timezone !== 'GMT') return null;
-    } catch {
-      // Defensive: fails safely to null if Intl.supportedValuesOf is unavailable
-      // (e.g., minimal ICU builds). Do not attempt further validation.
-      return null;
-    }
+    const lines: string[] = [];
 
-    // Validate locale — Intl.getCanonicalLocales throws RangeError for invalid BCP-47 tags
-    if (locale !== undefined) {
+    // ── Locale → language line ───────────────────────────────────────────────
+    let validLocale: string | undefined;
+    if (rawLocale !== null) {
       try {
-        Intl.getCanonicalLocales([locale]);
+        const canonicals = Intl.getCanonicalLocales([rawLocale]);
+        const canonical = canonicals[0];
+        if (!canonical) throw new RangeError('empty canonical');
+        validLocale = canonical;
+        try {
+          const displayNames = new Intl.DisplayNames([canonical], { type: 'language' });
+          const languageName = displayNames.of(canonical) ?? canonical;
+          lines.push(`User's language: ${languageName} (${canonical})`);
+        } catch {
+          // Intl.DisplayNames unavailable — fall back to raw code
+          lines.push(`User's language: ${canonical}`);
+        }
       } catch {
-        // Invalid locale tag — return null rather than risk injecting crafted strings
-        return null;
+        // Invalid BCP-47 tag — skip locale entirely
       }
     }
 
-    try {
-      const formatter = new Intl.DateTimeFormat(locale, {
-        timeZone: timezone,
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        weekday: 'long',
-        hour: 'numeric',
-        minute: 'numeric',
-        second: 'numeric',
-        timeZoneName: 'short',
-      });
-      const formatted = formatter.format(getNow());
-      // Strip BIDI control characters, non-printable chars, and other control sequences
-      // that could interfere with the [Context] block structure in the LLM prompt
-      const sanitized = formatted.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028\u2029\u202A-\u202E\uFEFF]/g, '');
-      return `User's local date and time: ${sanitized}`;
-    } catch {
-      // Intl.DateTimeFormat constructor failed despite validation — log for operator visibility
-      // (do NOT log timezone/locale values — they are PII-adjacent)
-      logger.warn({ pluginName: 'locale' }, 'locale plugin: Intl.DateTimeFormat threw after validation, returning null');
-      return null;
+    // ── Timezone → local datetime line ───────────────────────────────────────
+    if (rawTimezone !== null) {
+      // Validate timezone against the IANA allowlist — prevents adversarial inputs.
+      // UTC and GMT are valid but not always returned by Intl.supportedValuesOf.
+      let timezoneValid = rawTimezone === 'UTC' || rawTimezone === 'GMT';
+      if (!timezoneValid) {
+        try {
+          timezoneValid = Intl.supportedValuesOf('timeZone').includes(rawTimezone);
+        } catch {
+          // Minimal ICU build — skip timezone output
+        }
+      }
+
+      if (timezoneValid) {
+        try {
+          const formatter = new Intl.DateTimeFormat(validLocale, {
+            timeZone: rawTimezone,
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            weekday: 'long',
+            hour: 'numeric',
+            minute: 'numeric',
+            second: 'numeric',
+            timeZoneName: 'short',
+          });
+          const formatted = formatter.format(getNow());
+          // Strip BIDI control characters and other control sequences
+          const sanitized = formatted.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028\u2029\u202A-\u202E\uFEFF]/g, '');
+          lines.push(`User's local date and time: ${sanitized}`);
+        } catch {
+          logger.warn({ pluginName: 'locale' }, 'locale plugin: Intl.DateTimeFormat threw after validation, skipping datetime line');
+        }
+      }
     }
+
+    return lines.length > 0 ? lines.join('\n') : null;
   },
 };
