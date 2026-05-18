@@ -138,58 +138,6 @@ export async function processManagerMessage(
     // Do NOT log this object. Only projected fields (timezone, locale) are forwarded to plugins.
     let toolsetState: Record<string, unknown> = toolsetStateResult;
 
-    let systemPrompt: string;
-
-    if (managedBot?.status === 'ACTIVE') {
-      const template =
-        (env.MANAGER_SETTINGS_PROMPT && env.MANAGER_SETTINGS_PROMPT.trim()) ||
-        `You are HelloMinds' platform assistant for {name}.` +
-        `ONLY response in short messages be consie and direct, reply nicely to refuse user's request for long answers or lengthy tasks.` +
-        `ONLY response to questions about HelloMinds' platform, any other topics should be politely declined.` +
-        `Your tone will be supportive, friendly and humble. Language should be professional and simple.` +
-        `DO NOT say anything inappropriate or offensive, refrain from using slang or casual language.` +
-        `Their personal AI agent @{botUsername} is live and handles general conversations.` +
-        `Mind is a specialized AI agent that can assist with tasks, research, work.` +
-        `Your role is to help with account creation, and mind creation`;
-
-      systemPrompt = interpolate(template, {
-        name: safeName,
-        botUsername: managedBot.bot_username ?? '',
-      });
-    } else {
-      const suggestedUsername = safeUsername
-        ? `${safeUsername}_ai_bot`
-        : `user${userId}_bot`;
-      const deepLink =
-        `https://t.me/newbot/${botUsername}/${suggestedUsername}` +
-        `?name=${encodeURIComponent(`${safeName}'s Bot`)}`;
-
-      const template =
-        (env.MANAGER_ONBOARDING_PROMPT && env.MANAGER_ONBOARDING_PROMPT.trim()) ||
-        // `You are an onboarding assistant for HelloMinds.` +
-        // `ONLY response in short messages, reply nicely to refuse user's request for long answers or lengthy tasks.` +
-        // `ONLY response to questions about HelloMinds' platform, any other topics should be politely declined.` +
-        `You are a general assistant for HelloMinds.` +
-        `HelloMinds is a platform that lets anyone create an agentic AI — called a "Mind" — in under 60 seconds. Just an email, no coding, no app, no wallet needed.` +
-        `Key features:` +
-        `- Persistent identity – each Mind has its own verified identity`+
-        `- Persistent memory – it remembers past conversations` +
-        `- Agentic – it can act on your behalf`+
-        `- Under 60 seconds setup – super fast` +
-        `ONLY response in short messages, reply nicely to refuse user's request for long answers or lengthy tasks.` +
-        `Your responses cannot be more than 1000 characters.` +
-        `Help the user understand what HelloMinds does and guide them to create their personal mind.` +
-        `When the time is right, share this deep link with them: {deepLink}, label the link "create a new mind"` +
-        `You can only work on simple tasks, and simple search, and suggest to create a mind to work on specialize task.` +
-        `Be conversational, helpful, and answer any questions they have.`;
-
-      systemPrompt = interpolate(template, { name: safeName, deepLink });
-
-      if (managedBot?.status === 'PENDING' || managedBot?.status === 'PROVISIONING') {
-        systemPrompt += ` Note: the user's bot is currently being set up.`;
-      }
-    }
-
     // Resolve tool tier for this user and load the appropriate tools
     // B5: downgrade to base if authenticated tier but email is absent/empty
     let tier = resolveToolTier(toolsetState);
@@ -204,6 +152,38 @@ export async function processManagerMessage(
     });
 
     logger.debug({ userId, toolTier: tier, toolCount: tools.length }, 'processManagerMessage: tool tier resolved');
+
+    let systemPrompt: string;
+
+    if (tier === 'authenticated') {
+      let botContext: string;
+      if (managedBot?.status === 'ACTIVE') {
+        botContext = `Their Mind @${managedBot.bot_username ?? ''} is live and handling their general conversations.`;
+      } else if (managedBot?.status === 'PENDING' || managedBot?.status === 'PROVISIONING') {
+        botContext = `Their Mind is currently being set up — it will be ready shortly.`;
+      } else {
+        botContext = '';
+      }
+
+      const template =
+        (env.MANAGER_SETTINGS_PROMPT && env.MANAGER_SETTINGS_PROMPT.trim()) ||
+        `You are the HelloMinds assistant for {name}.\n\nThe user is verified and can create or configure their personal AI Mind.\n{botContext}\n\nUse the tools available to help with Mind creation and configuration. Keep all replies short and direct. Politely decline anything unrelated to HelloMinds.`;
+
+      systemPrompt = interpolate(template, { name: safeName, botContext, botUsername: managedBot?.bot_username ?? '' });
+    } else {
+      const suggestedUsername = safeUsername
+        ? `${safeUsername}_ai_bot`
+        : `user${userId}_bot`;
+      const deepLink =
+        `https://t.me/newbot/${botUsername}/${suggestedUsername}` +
+        `?name=${encodeURIComponent(`${safeName}'s Bot`)}`;
+
+      const template =
+        (env.MANAGER_ONBOARDING_PROMPT && env.MANAGER_ONBOARDING_PROMPT.trim()) ||
+        `You are the HelloMinds assistant, here to help {name} get started.\n\nHelloMinds lets anyone create a personal AI agent — called a "Mind" — in under 60 seconds. No coding, no app, no wallet needed. Just an email.\n\nA Mind has its own identity, persistent memory, and can act on your behalf for tasks, research, and work.\n\nYour job is to help the user understand HelloMinds and guide them toward creating their Mind. When the time is right, share this link with them: {deepLink}\n\nKeep all replies short and focused. Politely decline anything unrelated to HelloMinds.`;
+
+      systemPrompt = interpolate(template, { name: safeName, deepLink });
+    }
 
     const TYPING_REFRESH_MS = 4000;
     let lastTypingAt = 0;

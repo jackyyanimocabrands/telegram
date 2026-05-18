@@ -111,7 +111,7 @@ describe('handleManagerBotMessage', () => {
 
     expect(agentServiceStub.chatStream.calledOnce).to.be.true;
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
-    expect(systemPrompt).to.include('general assistant');
+    expect(systemPrompt).to.include('HelloMinds assistant');
     expect(systemPrompt).to.include('https://t.me/newbot');
   });
 
@@ -123,8 +123,8 @@ describe('handleManagerBotMessage', () => {
 
     expect(agentServiceStub.chatStream.calledOnce).to.be.true;
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
-    expect(systemPrompt).to.include('general assistant');
-    expect(systemPrompt).to.include('currently being set up');
+    expect(systemPrompt).to.include('HelloMinds assistant');
+    expect(systemPrompt).to.include('https://t.me/newbot');
   });
 
   it('routes to onboarding prompt when bot status is PROVISIONING', async () => {
@@ -134,20 +134,49 @@ describe('handleManagerBotMessage', () => {
     await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
 
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
-    expect(systemPrompt).to.include('currently being set up');
+    expect(systemPrompt).to.include('HelloMinds assistant');
+    expect(systemPrompt).to.include('https://t.me/newbot');
   });
 
-  it('routes to settings/billing prompt when bot status is ACTIVE', async () => {
-    findManagedBotByOwnerStub.resolves({ status: 'ACTIVE', bot_username: 'alicebot' });
+  it('routes to management prompt when tier is authenticated and bot status is ACTIVE', async () => {
+    // Re-register module with authenticated tier to test management prompt routing
+    await esmock.purge();
+    const authenticatedModule = await esmock('../../src/services/manager-bot.ts', {
+      '../../src/db/queries/managed-bots.js': {
+        findManagedBotByOwner: sinon.stub().resolves({ status: 'ACTIVE', bot_username: 'alicebot' }),
+      },
+      '../../src/db/queries/conversations.js': {
+        getToolsetState: sinon.stub().resolves({ email: 'alice@example.com', email_verified: true }),
+      },
+      '../../src/services/tool-tier.js': {
+        resolveToolTier: sinon.stub().returns('authenticated'),
+        getToolsForTier: sinon.stub().returns([]),
+      },
+      '../../src/services/conversation-throttle.js': {
+        checkThrottle: sinon.stub().resolves({ allowed: true, retryAfterMs: 0 }),
+      },
+      '../../src/services/conversation-lock.js': {
+        acquireLock: sinon.stub().resolves(true),
+        releaseLock: sinon.stub().resolves(),
+      },
+      '../../src/queues/manager-queue.js': {
+        managerQueue: { add: sinon.stub().resolves({ id: 'j1' }) },
+      },
+    });
+    async function* authStream() { yield 'AI reply'; }
+    const authAgent = {
+      chat: sinon.stub().resolves('AI reply'),
+      chatStream: sinon.stub().returns(authStream()),
+      clearContext: sinon.stub().resolves(),
+    };
     const message = makeMessage({ fromFirstName: 'Alice' });
+    await authenticatedModule.handleManagerBotMessage(message, mockTelegram, authAgent, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
 
-    await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
-
-    expect(agentServiceStub.chatStream.calledOnce).to.be.true;
-    const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
-    expect(systemPrompt).to.include('account creation');
+    expect(authAgent.chatStream.calledOnce).to.be.true;
+    const systemPrompt: string = authAgent.chatStream.firstCall.args[3];
+    expect(systemPrompt).to.include('verified');
     expect(systemPrompt).to.include('@alicebot');
-    expect(systemPrompt).not.to.include('onboarding');
+    expect(systemPrompt).not.to.include('get started');
   });
 
   it('sends LLM reply to user via telegram.sendMessage', async () => {
@@ -377,8 +406,15 @@ describe('handleManagerBotMessage', () => {
 
       const mod = await esmock('../../src/services/manager-bot.ts', {
         '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerEnvStub },
+        '../../src/db/queries/conversations.js': {
+          getToolsetState: sinon.stub().resolves({ email: 'alice@example.com', email_verified: true }),
+        },
         '../../src/config/env.js': {
           env: { MANAGER_SETTINGS_PROMPT: 'Welcome {name}. Your bot is @{botUsername}.' },
+        },
+        '../../src/services/tool-tier.js': {
+          resolveToolTier: sinon.stub().returns('authenticated'),
+          getToolsForTier: sinon.stub().returns([]),
         },
         '../../src/utils/interpolate.js': { interpolate: (t: string, v: Record<string, string>) => t.replace(/\{([^}]+)\}/g, (m: string, k: string) => v[k] ?? m) },
         '../../src/services/conversation-throttle.js': { checkThrottle: sinon.stub().resolves({ allowed: true, retryAfterMs: 0 }) },
@@ -423,7 +459,7 @@ describe('handleManagerBotMessage', () => {
       await mod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
 
       const systemPrompt: string = agentEnvStub.chatStream.firstCall.args[3];
-      expect(systemPrompt).to.include('general assistant for HelloMinds');
+      expect(systemPrompt).to.include('HelloMinds assistant');
       expect(systemPrompt).to.include('https://t.me/newbot');
     });
   });
@@ -560,15 +596,34 @@ describe('processManagerMessage', () => {
     const jobData = makeJobData();
     await processManagerMessage(jobData, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
-    expect(systemPrompt).to.include('general assistant');
+    expect(systemPrompt).to.include('HelloMinds assistant');
   });
 
-  it('routes to settings system prompt when bot is ACTIVE', async () => {
-    findManagedBotByOwnerStub.resolves({ status: 'ACTIVE', bot_username: 'alicebot' });
+  it('routes to management system prompt when tier is authenticated and bot is ACTIVE', async () => {
+    async function* authStream() { yield 'AI reply'; }
+    const authAgent = { chatStream: sinon.stub().returns(authStream()) };
+
+    const mod = await esmock('../../src/services/manager-bot.ts', {
+      '../../src/db/queries/managed-bots.js': {
+        findManagedBotByOwner: sinon.stub().resolves({ status: 'ACTIVE', bot_username: 'alicebot' }),
+      },
+      '../../src/db/queries/conversations.js': {
+        getToolsetState: sinon.stub().resolves({ email: 'alice@example.com', email_verified: true }),
+      },
+      '../../src/services/tool-tier.js': {
+        resolveToolTier: sinon.stub().returns('authenticated'),
+        getToolsForTier: sinon.stub().returns([]),
+      },
+      '../../src/services/conversation-throttle.js': { checkThrottle: sinon.stub().resolves({ allowed: true, retryAfterMs: 0 }) },
+      '../../src/services/conversation-lock.js': { acquireLock: sinon.stub().resolves(true), releaseLock: sinon.stub().resolves() },
+      '../../src/queues/manager-queue.js': { managerQueue: { add: sinon.stub().resolves({ id: 'j1' }) } },
+    });
+
     const jobData = makeJobData();
-    await processManagerMessage(jobData, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
-    const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
-    expect(systemPrompt).to.include('account creation');
+    await mod.processManagerMessage(jobData, mockTelegram, authAgent, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+    const systemPrompt: string = authAgent.chatStream.firstCall.args[3];
+    expect(systemPrompt).to.include('verified');
+    expect(systemPrompt).to.include('@alicebot');
   });
 
   it('calls agentService.chatStream and sends reply', async () => {
