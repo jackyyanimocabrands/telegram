@@ -111,7 +111,7 @@ describe('handleManagerBotMessage', () => {
 
     expect(agentServiceStub.chatStream.calledOnce).to.be.true;
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
-    expect(systemPrompt).to.include('HelloMinds assistant');
+    expect(systemPrompt).to.include('general assistant for HelloMinds');
     expect(systemPrompt).to.include('https://t.me/newbot');
   });
 
@@ -123,7 +123,7 @@ describe('handleManagerBotMessage', () => {
 
     expect(agentServiceStub.chatStream.calledOnce).to.be.true;
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
-    expect(systemPrompt).to.include('HelloMinds assistant');
+    expect(systemPrompt).to.include('general assistant for HelloMinds');
     expect(systemPrompt).to.include('https://t.me/newbot');
   });
 
@@ -134,7 +134,7 @@ describe('handleManagerBotMessage', () => {
     await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
 
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
-    expect(systemPrompt).to.include('HelloMinds assistant');
+    expect(systemPrompt).to.include('general assistant for HelloMinds');
     expect(systemPrompt).to.include('https://t.me/newbot');
   });
 
@@ -459,7 +459,7 @@ describe('handleManagerBotMessage', () => {
       await mod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
 
       const systemPrompt: string = agentEnvStub.chatStream.firstCall.args[3];
-      expect(systemPrompt).to.include('HelloMinds assistant');
+      expect(systemPrompt).to.include('general assistant for HelloMinds');
       expect(systemPrompt).to.include('https://t.me/newbot');
     });
   });
@@ -596,7 +596,7 @@ describe('processManagerMessage', () => {
     const jobData = makeJobData();
     await processManagerMessage(jobData, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
-    expect(systemPrompt).to.include('HelloMinds assistant');
+    expect(systemPrompt).to.include('general assistant for HelloMinds');
   });
 
   it('routes to management system prompt when tier is authenticated and bot is ACTIVE', async () => {
