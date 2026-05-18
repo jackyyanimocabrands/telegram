@@ -30,7 +30,7 @@ const mockLlmConfig = {
 // Module loader — re-imports node functions with esmocked llm-config
 // ---------------------------------------------------------------------------
 
-async function loadAgentNodes(insertTokenUsageStub?: sinon.SinonStub) {
+async function loadAgentNodes(insertTokenUsageStub?: sinon.SinonStub, buildEphemeralContextStub?: sinon.SinonStub) {
   const module = await esmock('../../src/services/agent.js', {
     '../../src/config/llm-config.js': { llmConfig: mockLlmConfig },
     '../../src/db/queries/conversations.js': {
@@ -42,6 +42,18 @@ async function loadAgentNodes(insertTokenUsageStub?: sinon.SinonStub) {
     },
     '../../src/db/client.js': {
       pool: {},
+    },
+    '../../src/services/ephemeral-context/index.js': {
+      buildEphemeralContext: buildEphemeralContextStub ?? sinon.stub().resolves(null),
+      createDefaultPlugins: sinon.stub().returns([]),
+    },
+    '../../src/config/env.js': {
+      env: {
+        EPHEMERAL_CONTEXT_ENABLED: true,
+        EPHEMERAL_CONTEXT_DATETIME_ENABLED: true,
+        EPHEMERAL_CONTEXT_LOCALE_ENABLED: true,
+        DATETIME_FORMAT: 'iso',
+      },
     },
   });
   return {
@@ -663,6 +675,133 @@ describe('agentNode', () => {
 
     await agentNode(state, { modelFactory: stubFactory });
 
+    expect(stubModel.invoke.calledOnce).to.be.true;
+    const [invokeArgs] = stubModel.invoke.firstCall.args as [unknown[]];
+    expect(invokeArgs).to.deep.equal(inputMessages);
+  });
+
+  // ── Ephemeral context integration ──────────────────────────────────────────
+
+  it('calls model.invoke with state.messages unchanged when ephemeralPlugins is empty', async () => {
+    const ephemeralStub = sinon.stub().resolves(null);
+    const { agentNode } = await loadAgentNodes(undefined, ephemeralStub);
+    const { stubModel, stubFactory } = makeModelFactory('reply');
+    const inputMessages = [new HumanMessage('hello')];
+    const state = makeState({ messages: inputMessages });
+
+    await agentNode(state, { modelFactory: stubFactory, ephemeralPlugins: [] });
+
+    const [invokeArgs] = stubModel.invoke.firstCall.args as [unknown[]];
+    expect(invokeArgs).to.have.length(1);
+    expect(invokeArgs[0]).to.be.instanceOf(HumanMessage);
+  });
+
+  it('appends ephemeral SystemMessage as last element when plugin returns content', async () => {
+    const { SystemMessage: SM } = await import('@langchain/core/messages');
+    const fakeEphemeralMsg = new SM('[Context]\nCurrent UTC date and time: 2024-01-15T10:00:00.000Z');
+    const ephemeralStub = sinon.stub().resolves(fakeEphemeralMsg);
+    const { agentNode } = await loadAgentNodes(undefined, ephemeralStub);
+    const { stubModel, stubFactory } = makeModelFactory('reply');
+    const inputMessages = [new HumanMessage('hi')];
+    const state = makeState({ messages: inputMessages });
+
+    await agentNode(state, { modelFactory: stubFactory, ephemeralPlugins: [] });
+
+    const [invokeArgs] = stubModel.invoke.firstCall.args as [unknown[]];
+    expect(invokeArgs).to.have.length(2);
+    expect(invokeArgs[invokeArgs.length - 1]).to.be.instanceOf(SM);
+    expect((invokeArgs[invokeArgs.length - 1] as InstanceType<typeof SM>).content).to.include('[Context]');
+  });
+
+  it('does NOT mutate state.messages after agentNode runs', async () => {
+    const fakeEphemeralMsg = new SystemMessage('[Context]\nsome context');
+    const ephemeralStub = sinon.stub().resolves(fakeEphemeralMsg);
+    const { agentNode } = await loadAgentNodes(undefined, ephemeralStub);
+    const { stubFactory } = makeModelFactory('reply');
+    const inputMessages = [new HumanMessage('hi')];
+    const state = makeState({ messages: inputMessages });
+    const originalLength = state.messages.length;
+    const originalRef = state.messages;
+
+    await agentNode(state, { modelFactory: stubFactory, ephemeralPlugins: [] });
+
+    expect(state.messages).to.equal(originalRef); // same reference
+    expect(state.messages).to.have.length(originalLength); // same length
+  });
+
+  it('still calls model.invoke when ephemeral plugin rejects', async () => {
+    // buildEphemeralContext swallows errors and returns null — model.invoke still called
+    const ephemeralStub = sinon.stub().resolves(null); // simulates all-plugins-rejected case
+    const { agentNode } = await loadAgentNodes(undefined, ephemeralStub);
+    const { stubModel, stubFactory } = makeModelFactory('reply');
+    const inputMessages = [new HumanMessage('hello')];
+    const state = makeState({ messages: inputMessages });
+
+    await agentNode(state, { modelFactory: stubFactory, ephemeralPlugins: [] });
+
+    expect(stubModel.invoke.calledOnce).to.be.true;
+    const [invokeArgs] = stubModel.invoke.firstCall.args as [unknown[]];
+    // Only the original messages — no ephemeral message appended
+    expect(invokeArgs).to.deep.equal(inputMessages);
+  });
+
+  it('passes only projected toolsetState fields (timezone, locale) to buildEphemeralContext', async () => {
+    const ephemeralStub = sinon.stub().resolves(null);
+    const { agentNode } = await loadAgentNodes(undefined, ephemeralStub);
+    const { stubFactory } = makeModelFactory('reply');
+    const state = makeState({
+      messages: [new HumanMessage('hi')],
+      toolsetState: { timezone: 'Asia/Tokyo', email: 'secret@example.com', email_verified: true },
+    });
+
+    await agentNode(state, { modelFactory: stubFactory, ephemeralPlugins: [] });
+
+    expect(ephemeralStub.calledOnce).to.be.true;
+    const ephemeralInput = ephemeralStub.firstCall.args[1];
+    // After B3 projection: only timezone and locale are forwarded (locale is undefined here)
+    expect(ephemeralInput.toolsetState.timezone).to.equal('Asia/Tokyo');
+    // PII fields must NOT be forwarded
+    expect(ephemeralInput.toolsetState).to.not.have.property('email');
+    expect(ephemeralInput.toolsetState).to.not.have.property('email_verified');
+  });
+
+  it('threads env with EPHEMERAL_CONTEXT_ENABLED:false through to buildEphemeralContext', async () => {
+    // Load agentNode with EPHEMERAL_CONTEXT_ENABLED: false in the mocked env
+    const ephemeralStub = sinon.stub().resolves(null);
+    const module = await esmock('../../src/services/agent.js', {
+      '../../src/config/llm-config.js': { llmConfig: mockLlmConfig },
+      '../../src/db/queries/conversations.js': {
+        setConversationSystemPrompt: sinon.stub().resolves(),
+        clearConversation: sinon.stub().resolves(),
+      },
+      '../../src/db/queries/token-usage.js': { insertTokenUsage: sinon.stub().resolves() },
+      '../../src/db/client.js': { pool: {} },
+      '../../src/services/ephemeral-context/index.js': {
+        buildEphemeralContext: ephemeralStub,
+        createDefaultPlugins: sinon.stub().returns([]),
+      },
+      '../../src/config/env.js': {
+        env: {
+          EPHEMERAL_CONTEXT_ENABLED: false,
+          EPHEMERAL_CONTEXT_DATETIME_ENABLED: false,
+          EPHEMERAL_CONTEXT_LOCALE_ENABLED: false,
+          DATETIME_FORMAT: 'iso',
+        },
+      },
+    });
+    const agentNodeFn = module.agentNode as (state: any, services: any) => Promise<any>;
+    const { stubModel, stubFactory } = makeModelFactory('reply');
+    const inputMessages = [new HumanMessage('hello')];
+    const state = makeState({ messages: inputMessages });
+
+    await agentNodeFn(state, { modelFactory: stubFactory, ephemeralPlugins: [] });
+
+    // buildEphemeralContext was called with the env that has the flag false
+    expect(ephemeralStub.calledOnce).to.be.true;
+    const passedEnv = ephemeralStub.firstCall.args[2];
+    expect(passedEnv.EPHEMERAL_CONTEXT_ENABLED).to.be.false;
+
+    // model.invoke was called with exactly the original messages (no ephemeral SystemMessage)
     expect(stubModel.invoke.calledOnce).to.be.true;
     const [invokeArgs] = stubModel.invoke.firstCall.args as [unknown[]];
     expect(invokeArgs).to.deep.equal(inputMessages);

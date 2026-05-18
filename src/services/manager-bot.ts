@@ -134,6 +134,8 @@ export async function processManagerMessage(
       }),
     ]);
 
+    // PII WARNING: toolsetState may contain email and email_verified.
+    // Do NOT log this object. Only projected fields (timezone, locale) are forwarded to plugins.
     let toolsetState: Record<string, unknown> = toolsetStateResult;
 
     let systemPrompt: string;
@@ -227,7 +229,7 @@ export async function processManagerMessage(
     let lastSentAt = 0;
     const throttleMs = env.STREAM_THROTTLE_MS;
     
-    for await (const chunk of agentService.chatStream(managerBotId, userId, text, systemPrompt, tools)) {
+    for await (const chunk of agentService.chatStream(managerBotId, userId, text, systemPrompt, tools, toolsetState)) {
       accumulated += chunk;
       const now = Date.now();
       await tryTyping();
@@ -239,11 +241,8 @@ export async function processManagerMessage(
         lastSentAt = now;
       }
     }
-    logger.debug({ chatId, mes : toTelegramMarkdownV2(accumulated) },  'processManagerMessage: stream ended');
-    // const parts = splitAtSentenceBoundary(accumulated);
-    // for (const part of parts) {
-      await telegram.sendMessage(managerBotToken, chatId, toTelegramMarkdownV2(accumulated), { parse_mode: 'MarkdownV2' });
-    // }
+    logger.debug({ chatId, message: toTelegramMarkdownV2(accumulated) }, 'processManagerMessage: stream ended');
+    await telegram.sendMessage(managerBotToken, chatId, toTelegramMarkdownV2(accumulated), { parse_mode: 'MarkdownV2' });
 
     logger.debug({ chatId, userId }, 'processManagerMessage: reply sent');
   } catch (err) {

@@ -18,6 +18,7 @@ import {
 import type { StructuredTool } from '@langchain/core/tools';
 import { logger } from '../utils/logger.js';
 import { llmConfig } from '../config/llm-config.js';
+import { env } from '../config/env.js';
 import { ConversationService, toBaseMessages, fromBaseMessages } from './conversation.js';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { getModelConfig } from './llm/model-registry.js';
@@ -25,6 +26,8 @@ import { estimateTokens } from './llm/token-estimator.js';
 import { setConversationSystemPrompt } from '../db/queries/conversations.js';
 import { insertTokenUsage } from '../db/queries/token-usage.js';
 import { pool } from '../db/client.js';
+import { buildEphemeralContext, createDefaultPlugins } from './ephemeral-context/index.js';
+import type { EphemeralContextPlugin, PluginContextFields } from './ephemeral-context/index.js';
 
 /**
  * Strips unsafe fields (e.g. Authorization headers embedded by LangChain HTTP errors)
@@ -125,6 +128,14 @@ const AgentStateAnnotation = Annotation.Root({
     reducer: (_a: number, b: number) => b,
     default: () => 0,
   }),
+  /**
+   * Caller-supplied key-value store for ephemeral context plugins (e.g. timezone, locale).
+   * Never persisted — exists only for the duration of the graph invocation.
+   */
+  toolsetState: Annotation<Record<string, unknown>>({
+    reducer: (_a: Record<string, unknown>, b: Record<string, unknown>) => b,
+    default: () => ({}),
+  }),
 });
 
 type AgentState = typeof AgentStateAnnotation.State;
@@ -206,16 +217,43 @@ export async function loadHistoryNode(
  * Invokes the LLM with the full conversation context and returns the AI reply.
  * Attempts the primary model first; falls back to llmConfig.chat.fallback on error.
  * When state.tools is non-empty, binds tools to the LLM via bindTools().
+ *
+ * Ephemeral context: runs enabled plugins in parallel, assembles a tailing
+ * SystemMessage appended to a local messagesForLLM copy. This message is NEVER
+ * added to state.messages and is never persisted.
  */
 export async function agentNode(
   state: AgentState,
-  services: { modelFactory: ILlmModelFactory },
+  services: { modelFactory: ILlmModelFactory; getNow?: () => Date; ephemeralPlugins?: EphemeralContextPlugin[] },
 ): Promise<Partial<AgentState>> {
   const { modelFactory } = services;
+  const getNow = services.getNow ?? (() => new Date());
+  const ephemeralPlugins = services.ephemeralPlugins ?? [];
+
   logger.debug(
     { messageCount: state.messages.length, slotCount: llmConfig.chat.length, toolCount: (state.tools ?? []).length },
     'agentNode: invoking LLM',
   );
+
+  // Build messagesForLLM — local copy only, never mutates state.messages
+  const messagesForLLM = [...state.messages];
+  // Project only the fields plugins are allowed to use — prevents future plugins
+  // accidentally reading PII fields (e.g. email, email_verified) from toolsetState.
+  const pluginSafeContext: PluginContextFields = {
+    timezone: typeof (state.toolsetState ?? {}).timezone === 'string' ? String((state.toolsetState ?? {}).timezone) : undefined,
+    locale: typeof (state.toolsetState ?? {}).locale === 'string' ? String((state.toolsetState ?? {}).locale) : undefined,
+  };
+  const ephemeralMsg = await buildEphemeralContext(
+    ephemeralPlugins,
+    {
+      botId: state.botId,
+      userId: String(state.userId),
+      toolsetState: pluginSafeContext,
+      getNow,
+    },
+    env,
+  );
+  if (ephemeralMsg) messagesForLLM.push(ephemeralMsg);
 
   let lastErr: unknown;
   for (let i = 0; i < llmConfig.chat.length; i++) {
@@ -237,7 +275,7 @@ export async function agentNode(
         }
       }
 
-      const aiMessage = await model.invoke(state.messages) as AIMessage;
+      const aiMessage = await model.invoke(messagesForLLM) as AIMessage;
       logger.debug(
         { provider: slot.provider, model: slot.model, attemptIndex: i, contentLength: String(aiMessage.content).length },
         'agentNode: got reply',
@@ -617,8 +655,14 @@ export async function saveNode(
 export function buildAgentGraph(
   conversationService: ConversationService,
   modelFactory: ILlmModelFactory,
+  options: {
+    getNow?: () => Date;
+    ephemeralPlugins?: EphemeralContextPlugin[];
+  } = {},
 ) {
-  const services = { conversationService, modelFactory };
+  const getNow = options.getNow ?? (() => new Date());
+  const ephemeralPlugins = options.ephemeralPlugins ?? createDefaultPlugins(env);
+  const services = { conversationService, modelFactory, getNow, ephemeralPlugins };
 
   return new StateGraph(AgentStateAnnotation)
     .addNode('loadHistory', (state: AgentState) => loadHistoryNode(state, services))
@@ -647,8 +691,13 @@ export class AgentService {
     private readonly modelFactory: ILlmModelFactory,
     // TR-5: injectable graph for testing
     graph?: CompiledGraph,
+    private readonly getNow: () => Date = () => new Date(),
+    private readonly ephemeralPlugins?: EphemeralContextPlugin[],
   ) {
-    this.graph = graph ?? buildAgentGraph(conversationService, modelFactory);
+    this.graph = graph ?? buildAgentGraph(conversationService, modelFactory, {
+      getNow: this.getNow,
+      ephemeralPlugins: this.ephemeralPlugins,
+    });
   }
 
   /**
@@ -659,6 +708,7 @@ export class AgentService {
    * @param text                User message text
    * @param systemPromptOverride  Optional system prompt to use instead of stored one
    * @param tools               Optional tools to make available to the agent
+   * @param toolsetState        Optional key-value store for ephemeral context plugins
    */
   async chat(
     botId: string,
@@ -666,6 +716,7 @@ export class AgentService {
     text: string,
     systemPromptOverride?: string,
     tools?: StructuredTool[],
+    toolsetState?: Record<string, unknown>,
   ): Promise<string> {
     logger.debug({ botId, userId, textLength: text.length }, 'AgentService.chat: start');
 
@@ -678,6 +729,7 @@ export class AgentService {
       userId,
       systemPromptOverride,
       tools: tools ?? [],
+      toolsetState: toolsetState ?? {},
     };
 
     const result = await this.graph.invoke(initialState);
@@ -718,6 +770,7 @@ export class AgentService {
    * @param text                User message text
    * @param systemPromptOverride  Optional system prompt to use instead of stored one
    * @param tools               Optional tools to make available to the agent
+   * @param toolsetState        Optional key-value store for ephemeral context plugins
    */
   async *chatStream(
     botId: string,
@@ -725,6 +778,7 @@ export class AgentService {
     text: string,
     systemPromptOverride?: string,
     tools?: StructuredTool[],
+    toolsetState?: Record<string, unknown>,
   ): AsyncGenerator<string> {
     logger.debug({ botId, userId, textLength: text.length }, 'AgentService.chatStream: start');
 
@@ -735,6 +789,7 @@ export class AgentService {
       userId,
       systemPromptOverride,
       tools: tools ?? [],
+      toolsetState: toolsetState ?? {},
     };
 
     let tokenCount = 0;

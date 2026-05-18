@@ -5,7 +5,7 @@ if (process.env.NODE_ENV !== 'production') {
   dotenvConfig();
 }
 
-const envSchema = z.object({
+export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   BOT_TOKEN: z.string().min(1, 'BOT_TOKEN is required'),
   BOT_USERNAME: z.string().min(1, 'BOT_USERNAME is required').transform(v => v.replace(/^@/, '')),
@@ -65,6 +65,20 @@ const envSchema = z.object({
   SES_FROM_ADDRESS: z.string().email().optional(),
   EMAIL_VERIFICATION_TOKEN_TTL_SECS: z.coerce.number().int().positive().default(1800), // 30 min
   EMAIL_VERIFICATION_RENEW_THRESHOLD_SECS: z.coerce.number().int().positive().default(300), // 5 min
+  // Ephemeral context
+  // NOTE: z.coerce.boolean() coerces ANY non-empty string to true (including "false").
+  // Use a union transform that honours the string "false" / "0" from shell environments.
+  // The transform is case-insensitive: "TRUE", "True", and "true" all map to true.
+  EPHEMERAL_CONTEXT_ENABLED: z.union([z.boolean(), z.string()])
+    .transform(v => v === true || (typeof v === 'string' && (v.toLowerCase() === 'true' || v === '1')))
+    .default(true),
+  EPHEMERAL_CONTEXT_DATETIME_ENABLED: z.union([z.boolean(), z.string()])
+    .transform(v => v === true || (typeof v === 'string' && (v.toLowerCase() === 'true' || v === '1')))
+    .default(true),
+  EPHEMERAL_CONTEXT_LOCALE_ENABLED: z.union([z.boolean(), z.string()])
+    .transform(v => v === true || (typeof v === 'string' && (v.toLowerCase() === 'true' || v === '1')))
+    .default(true),
+  DATETIME_FORMAT: z.enum(['iso', 'rfc2822', 'unix']).default('iso'),
 });
 
 export type Env = z.infer<typeof envSchema>;
