@@ -151,7 +151,6 @@ export class BotRegistry {
       const stored = await appStateQueries.getAppState('manager_polling_offset');
       if (stored) offset = parseInt(stored, 10);
     } else {
-      // Load persisted offset for child bot (handles hot-registration after restart)
       const row = await managedBotQueries.findManagedBotByBotId(entry.botId as number);
       if (row?.polling_offset) offset = row.polling_offset;
     }

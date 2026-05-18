@@ -7,11 +7,10 @@ import { MockTelegramClient } from '../mocks/telegram-client.js';
 describe('handleManagerBotMessage', () => {
   let handleManagerBotMessage: any;
   let mockTelegram: MockTelegramClient;
-  let agentServiceStub: {
+  let   agentServiceStub: {
     chat: sinon.SinonStub;
     chatStream: sinon.SinonStub;
     clearContext: sinon.SinonStub;
-    generateWarmPrompt: sinon.SinonStub;
   };
   let findManagedBotByOwnerStub: sinon.SinonStub;
   let checkThrottleStub: sinon.SinonStub;
@@ -53,7 +52,6 @@ describe('handleManagerBotMessage', () => {
       chat: sinon.stub().resolves('AI reply'),
       chatStream: sinon.stub().returns(defaultStream()),
       clearContext: sinon.stub().resolves(),
-      generateWarmPrompt: sinon.stub().resolves(null),
     };
 
     findManagedBotByOwnerStub = sinon.stub().resolves(null);

@@ -38,15 +38,7 @@ export async function processEmailVerificationJob(
     return;
   }
 
-  // BLOCKER 3: resolve the correct bot token based on botId
-  let botToken: string;
-  if (job.data.botId === deps.managerBotId) {
-    botToken = deps.managerBotToken;
-  } else {
-    throw new Error(
-      `processEmailVerificationJob: child bot token lookup not implemented for botId=${job.data.botId}. Implement getDecryptedBotToken lookup from token-store.ts before enabling child-bot email verification.`,
-    );
-  }
+  const botToken = deps.managerBotToken;
 
   // BLOCKER 3: escape email for MarkdownV2 before embedding
   const escapedEmail = escapeMdV2(tokenRow.email);

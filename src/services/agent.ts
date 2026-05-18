@@ -23,7 +23,6 @@ import { ConversationService, toBaseMessages, fromBaseMessages } from './convers
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { getModelConfig } from './llm/model-registry.js';
 import { estimateTokens } from './llm/token-estimator.js';
-import { setConversationSystemPrompt } from '../db/queries/conversations.js';
 import { insertTokenUsage } from '../db/queries/token-usage.js';
 import { pool } from '../db/client.js';
 import { buildEphemeralContext, createDefaultPlugins } from './ephemeral-context/index.js';
@@ -718,7 +717,7 @@ export class AgentService {
 
   constructor(
     private readonly conversationService: ConversationService,
-    private readonly modelFactory: ILlmModelFactory,
+    modelFactory: ILlmModelFactory,
     // TR-5: injectable graph for testing
     graph?: CompiledGraph,
     private readonly getNow: () => Date = () => new Date(),
@@ -847,65 +846,5 @@ export class AgentService {
   async clearContext(botId: string, userId: number): Promise<void> {
     logger.info({ botId, userId }, 'AgentService.clearContext');
     await this.conversationService.clearMessages(botId, userId);
-  }
-
-  /**
-   * Generate a warm system prompt for a child bot by distilling the conversation
-   * history between the user and the manager bot.
-   *
-   * Returns null if there is no history or generation fails.
-   */
-  async generateWarmPrompt(botId: string, userId: number): Promise<string | null> {
-    logger.debug({ botId, userId }, 'AgentService.generateWarmPrompt: start');
-
-    const row = await this.conversationService.load(botId, userId);
-    if (!row.messages || row.messages.length === 0) {
-      logger.debug({ botId, userId }, 'AgentService.generateWarmPrompt: no history, skipping');
-      return null;
-    }
-
-    const { provider, model: modelName, temperature } = llmConfig.summarization[0]!;
-    const model = this.modelFactory.create(provider, modelName, temperature);
-
-    const historyMessages = toBaseMessages(row.messages);
-
-    // Providers require user-first turn ordering — drop any leading assistant messages
-    const firstUserIdx = historyMessages.findIndex(m => m.getType() === 'human');
-    const trimmedHistory = firstUserIdx >= 0 ? historyMessages.slice(firstUserIdx) : historyMessages;
-
-    try {
-      const result = await model.invoke([
-        new SystemMessage(
-          "You are a persona analyst. Based on the onboarding conversation, write 3-5 sentences describing this user's personality, interests, communication style, and what they want from their AI assistant. Be specific and personal. Output only the description.",
-        ),
-        ...trimmedHistory,
-        new HumanMessage(
-          "Based on the conversation above, describe this user's persona in 3-5 sentences for their personal AI assistant. Be specific and personal.",
-        ),
-      ]) as AIMessage;
-
-      const MAX_WARM_PROMPT_LENGTH = 2000;
-      const warmPrompt = (
-        typeof result.content === 'string' ? result.content : JSON.stringify(result.content)
-      ).slice(0, MAX_WARM_PROMPT_LENGTH);
-
-      logger.info(
-        { botId, userId, promptLength: warmPrompt.length },
-        'AgentService.generateWarmPrompt: done',
-      );
-      return warmPrompt;
-    } catch (err) {
-      logger.error({ err: sanitizeLlmError(err), botId, userId }, 'AgentService.generateWarmPrompt: failed');
-      return null;
-    }
-  }
-
-  /**
-   * Seed a system prompt into a conversation row directly.
-   * Used for warm prompt injection during child bot activation.
-   */
-  async seedSystemPrompt(botId: string, userId: number, systemPrompt: string): Promise<void> {
-    logger.debug({ botId, userId }, 'AgentService.seedSystemPrompt');
-    await setConversationSystemPrompt(botId, userId, systemPrompt);
   }
 }

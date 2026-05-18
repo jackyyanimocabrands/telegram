@@ -242,101 +242,6 @@ describe('AgentService (LangGraph)', () => {
     });
   });
 
-  // ── generateWarmPrompt() ──────────────────────────────────────────────────
-
-  describe('generateWarmPrompt()', () => {
-    it('returns null when conversation has no messages', async () => {
-      const AgentService = await buildAgentService();
-      const convSvc = makeConvService({ messages: [] });
-      const { stubFactory } = makeModelFactory();
-
-      const svc = new AgentService(convSvc, stubFactory);
-      const result = await svc.generateWarmPrompt('manager-bot', 99);
-
-      expect(result).to.be.null;
-      expect(stubFactory.create.called).to.be.false;
-    });
-
-    it('returns a non-empty string when conversation has messages', async () => {
-      const AgentService = await buildAgentService();
-      const convSvc = makeConvService({
-        messages: [
-          { role: 'user', content: 'I love TypeScript' },
-          { role: 'assistant', content: 'Great choice!' },
-        ],
-      });
-      const warmPrompt = 'User is a TypeScript enthusiast who values type safety.';
-      const { stubFactory } = makeModelFactory(warmPrompt);
-
-      const svc = new AgentService(convSvc, stubFactory);
-      const result = await svc.generateWarmPrompt('manager-bot', 99);
-
-      expect(result).to.be.a('string');
-      expect(result).to.equal(warmPrompt);
-    });
-
-    it('calls modelFactory.create with summarization provider and model from llmConfig', async () => {
-      const AgentService = await buildAgentService();
-      const convSvc = makeConvService({
-        messages: [{ role: 'user', content: 'hello' }],
-      });
-      const { stubFactory } = makeModelFactory('warm prompt text');
-
-      const svc = new AgentService(convSvc, stubFactory);
-      await svc.generateWarmPrompt('manager-bot', 99);
-
-      // mockLlmConfig summarization[0] = openai / gpt-4o-mini
-      expect(stubFactory.create.calledWith('openai', 'gpt-4o-mini')).to.be.true;
-    });
-
-    it('returns null when model.invoke rejects (LLM failure)', async () => {
-      const AgentService = await buildAgentService();
-      const convSvc = makeConvService({
-        messages: [{ role: 'user', content: 'hello' }],
-      });
-      const failingModel = {
-        invoke: sinon.stub().rejects(new Error('LLM timeout')),
-      };
-      const stubFactory = { create: sinon.stub().returns(failingModel) };
-
-      const svc = new AgentService(convSvc, stubFactory);
-      const result = await svc.generateWarmPrompt('manager-bot', 99);
-
-      expect(result).to.be.null;
-    });
-
-    // T8: prompt structure verification
-    it('invoke receives array whose first element is a SystemMessage', async () => {
-      const AgentService = await buildAgentService();
-      const convSvc = makeConvService({
-        messages: [{ role: 'user', content: 'Tell me about yourself.' }],
-      });
-      const { stubModel, stubFactory } = makeModelFactory('warm persona text');
-
-      const svc = new AgentService(convSvc, stubFactory);
-      await svc.generateWarmPrompt('manager-bot', 99);
-
-      expect(stubModel.invoke.calledOnce).to.be.true;
-      const [invokeArgs] = stubModel.invoke.firstCall.args as [unknown[]];
-      expect(invokeArgs[0]).to.be.instanceOf(SystemMessage);
-    });
-
-    it('invoke receives array whose last element is a HumanMessage', async () => {
-      const AgentService = await buildAgentService();
-      const convSvc = makeConvService({
-        messages: [{ role: 'user', content: 'Tell me about yourself.' }],
-      });
-      const { stubModel, stubFactory } = makeModelFactory('warm persona text');
-
-      const svc = new AgentService(convSvc, stubFactory);
-      await svc.generateWarmPrompt('manager-bot', 99);
-
-      expect(stubModel.invoke.calledOnce).to.be.true;
-      const [invokeArgs] = stubModel.invoke.firstCall.args as [unknown[]];
-      expect(invokeArgs[invokeArgs.length - 1]).to.be.instanceOf(HumanMessage);
-    });
-  });
-
   // ── checkBudget branch — summarize fires when over budget ─────────────────
 
   describe('checkBudget router (summarize path)', () => {
@@ -386,23 +291,6 @@ describe('AgentService (LangGraph)', () => {
 
       // At least 2 create() calls: agent model + summarizer model
       expect(stubFactory.create.callCount).to.be.at.least(2);
-    });
-  });
-
-  // ── seedSystemPrompt() ────────────────────────────────────────────────────
-
-  describe('seedSystemPrompt()', () => {
-    it('calls setConversationSystemPrompt DB query with correct args', async () => {
-      const AgentService = await buildAgentService();
-      const convSvc = makeConvService();
-      const { stubFactory } = makeModelFactory();
-
-      const svc = new AgentService(convSvc, stubFactory);
-      await svc.seedSystemPrompt('bot-1', 42, 'You are a helpful assistant.');
-
-      expect(setConversationSystemPromptStub.calledOnceWith(
-        'bot-1', 42, 'You are a helpful assistant.',
-      )).to.be.true;
     });
   });
 

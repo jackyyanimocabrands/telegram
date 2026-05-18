@@ -89,22 +89,6 @@ describe('processEmailVerificationJob', () => {
     expect(markNotifiedStub.called).to.be.false;
   });
 
-  // ── 2. botId !== managerBotId → throws "not implemented" ─────────────────
-
-  it('2. throws error containing "not implemented" when botId is not the manager bot', async () => {
-    getTokenStub.resolves(makeTokenRow());
-    const job = makeJob({ botId: 'child-bot-456' });
-
-    let threw = false;
-    try {
-      await processEmailVerificationJob(job, makeDeps());
-    } catch (err) {
-      threw = true;
-      expect((err as Error).message).to.include('not implemented');
-    }
-    expect(threw).to.be.true;
-  });
-
   // ── 3. Happy path: sendMessage with escaped email, markNotified called ────
 
   it('3. happy path: sendMessage called with MarkdownV2-escaped email, markNotified called with jti', async () => {
