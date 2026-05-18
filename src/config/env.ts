@@ -79,6 +79,13 @@ export const envSchema = z.object({
     .transform(v => v === true || (typeof v === 'string' && (v.toLowerCase() === 'true' || v === '1')))
     .default(true),
   DATETIME_FORMAT: z.enum(['iso', 'rfc2822', 'unix']).default('iso'),
+  // LangSmith tracing (read directly by LangChain SDK from process.env)
+  LANGCHAIN_TRACING_V2: z.union([z.boolean(), z.string()])
+    .transform(v => v === true || (typeof v === 'string' && (v.toLowerCase() === 'true' || v === '1')))
+    .default(false),
+  LANGCHAIN_API_KEY: z.string().optional(),
+  LANGCHAIN_PROJECT: z.string().optional(),
+  LANGCHAIN_ENDPOINT: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -90,7 +97,7 @@ if (!parsed.success) {
     'ENCRYPTION_MASTER_KEY', 'ES256_PRIVATE_KEY', 'ES256_PUBLIC_KEY',
     'BOT_TOKEN', 'BOT_USERNAME', 'WEBHOOK_SECRET', 'CHILD_WEBHOOK_SECRET',
     'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'OPENROUTER_API_KEY',
-    'ADMIN_API_KEY', 'BOT_MGMT_API_KEY', 'EXA_API_KEY',
+    'ADMIN_API_KEY', 'BOT_MGMT_API_KEY', 'EXA_API_KEY', 'LANGCHAIN_API_KEY',
     'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY',
   ]);
   const errors = parsed.error.flatten().fieldErrors;
