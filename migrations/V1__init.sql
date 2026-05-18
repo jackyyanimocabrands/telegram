@@ -1,11 +1,12 @@
 -- 001_init.sql
--- Consolidated initial schema. Replaces migrations 001–012.
--- Pre-launch — single clean schema with UUID PKs, no FK constraints.
+-- Consolidated initial schema. Pre-launch — single clean schema with UUID PKs, no FK constraints.
 
 -- ── clean slate ────────────────────────────────────────────────────────────
+DROP TABLE IF EXISTS email_verification_tokens;
 DROP TABLE IF EXISTS conversations;
 DROP TABLE IF EXISTS webhook_event_log;
 DROP TABLE IF EXISTS managed_bots;
+DROP TABLE IF EXISTS token_usage;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS app_state;
 DROP TYPE  IF EXISTS managed_bot_status;
@@ -97,11 +98,15 @@ CREATE TABLE conversations (
   summary                 TEXT,
   system_prompt           TEXT,
   force_summarize         BOOLEAN      NOT NULL DEFAULT FALSE,
+  toolset_state           JSONB        NOT NULL DEFAULT '{}'::jsonb,
   created_at              TIMESTAMPTZ  NOT NULL DEFAULT now(),
   updated_at              TIMESTAMPTZ  NOT NULL DEFAULT now(),
   UNIQUE (bot_id, telegram_user_id)
   -- The UNIQUE constraint above implicitly creates a B-tree index on (bot_id, telegram_user_id).
 );
+CREATE INDEX idx_conversations_toolset_email_verified
+  ON conversations ((toolset_state->>'email_verified'))
+  WHERE toolset_state->>'email_verified' = 'true';
 
 -- ── token_usage ────────────────────────────────────────────────────────────
 CREATE TABLE token_usage (
@@ -116,9 +121,24 @@ CREATE TABLE token_usage (
   total_tokens      INTEGER     NOT NULL DEFAULT 0,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE INDEX idx_token_usage_bot_user    ON token_usage (bot_id, telegram_user_id);
-CREATE INDEX idx_token_usage_model       ON token_usage (provider, model);
-CREATE INDEX idx_token_usage_created_at  ON token_usage (created_at);
+CREATE INDEX idx_token_usage_bot_user     ON token_usage (bot_id, telegram_user_id);
+CREATE INDEX idx_token_usage_model        ON token_usage (provider, model);
+CREATE INDEX idx_token_usage_created_at   ON token_usage (created_at);
 CREATE INDEX idx_token_usage_bot_created  ON token_usage (bot_id, created_at DESC);
 CREATE INDEX idx_token_usage_model_created ON token_usage (provider, model, created_at);
+
+-- ── email_verification_tokens ──────────────────────────────────────────────
+CREATE TABLE email_verification_tokens (
+  jti          UUID        PRIMARY KEY,
+  email        TEXT        NOT NULL,
+  bot_id       TEXT        NOT NULL,
+  user_id      BIGINT      NOT NULL,
+  status       TEXT        NOT NULL DEFAULT 'pending'
+               CHECK (status IN ('pending', 'verified', 'notified')),
+  expires_at   TIMESTAMPTZ NOT NULL,
+  verified_at  TIMESTAMPTZ,
+  notified_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_email_verification_tokens_lookup
+  ON email_verification_tokens (bot_id, user_id, status, expires_at DESC, created_at DESC);
