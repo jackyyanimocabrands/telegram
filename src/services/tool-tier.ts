@@ -57,7 +57,7 @@ export function resolveToolTier(toolsetState: ToolsetState): ToolTier {
 export function getToolsForTier(tier: ToolTier, deps: ToolDeps): StructuredTool[] {
   const sharedTools = [
     createWebfetchTool({ botId: deps.botId, userId: deps.userId, redisClient: deps.redisClient }),
-    createWebsearchTool(),
+    createWebsearchTool(undefined, deps.botId, deps.userId),
   ];
 
   if (tier === 'base') {
@@ -70,8 +70,8 @@ export function getToolsForTier(tier: ToolTier, deps: ToolDeps): StructuredTool[
   // authenticated
   return [
     createClearEmailVerificationTool(deps.botId, deps.userId, deps.pool),
-    createCreateBotTool(deps.userEmail),
-    createConfigureBotTool(deps.userEmail),
+    createCreateBotTool(deps.userEmail, undefined, deps.botId, deps.userId),
+    createConfigureBotTool(deps.userEmail, undefined, deps.botId, deps.userId),
     ...sharedTools,
   ];
 }

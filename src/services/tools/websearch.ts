@@ -1,6 +1,7 @@
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { env } from '../../config/env.js';
+import { logger } from '../../utils/logger.js';
 
 interface ExaSearchResult {
   title?: string;
@@ -12,9 +13,10 @@ interface ExaSearchResponse {
   results?: ExaSearchResult[];
 }
 
-export function createWebsearchTool(apiKey: string = env.EXA_API_KEY ?? '') {
+export function createWebsearchTool(apiKey: string = env.EXA_API_KEY ?? '', botId?: string, userId?: string) {
   return tool(
     async (input) => {
+      logger.debug({ botId, userId }, 'web_search tool: invoked');
       if (!apiKey) return 'Search is not configured. EXA_API_KEY is missing.';
       try {
         const response = await fetch('https://api.exa.ai/search', {

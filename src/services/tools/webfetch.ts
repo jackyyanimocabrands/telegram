@@ -3,6 +3,7 @@ import { z } from 'zod';
 import dns from 'dns';
 import { env } from '../../config/env.js';
 import { getRedisClient } from '../redis.js';
+import { logger } from '../../utils/logger.js';
 import type { Redis } from 'ioredis';
 
 interface WebfetchDeps {
@@ -88,6 +89,7 @@ export function createWebfetchTool(deps: WebfetchDeps) {
 
   return tool(
     async (input) => {
+      logger.debug({ botId, userId }, 'web_fetch tool: invoked');
       try {
         let hostname: string;
         try {

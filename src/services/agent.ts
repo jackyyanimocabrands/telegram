@@ -280,6 +280,18 @@ export async function agentNode(
         { provider: slot.provider, model: slot.model, attemptIndex: i, contentLength: String(aiMessage.content).length },
         'agentNode: got reply',
       );
+      if (aiMessage.tool_calls?.length) {
+        logger.debug(
+          {
+            provider: slot.provider,
+            model: slot.model,
+            toolNames: aiMessage.tool_calls.map(tc => tc.name),
+            toolCallCount: aiMessage.tool_calls.length,
+            round: state.toolCallRound,
+          },
+          'agentNode: LLM requested tool calls',
+        );
+      }
       const chatUsage = aiMessage.usage_metadata ?? null;
       return {
         messages: [aiMessage],
@@ -329,6 +341,15 @@ export async function toolNode(state: AgentState): Promise<Partial<AgentState>> 
   const toolResults: ToolMessage[] = [];
 
   for (const toolCall of lastMessage.tool_calls) {
+    logger.debug(
+      {
+        toolName: toolCall.name,
+        toolCallId: toolCall.id ?? '',
+        round: state.toolCallRound,
+        argKeys: Object.keys(toolCall.args as Record<string, unknown>),
+      },
+      'toolNode: invoking tool',
+    );
     const tool = state.tools.find(t => t.name === toolCall.name);
     if (!tool) {
       logger.warn({ toolName: toolCall.name }, 'toolNode: tool not found');
@@ -348,6 +369,15 @@ export async function toolNode(state: AgentState): Promise<Partial<AgentState>> 
           content: String(result),
           tool_call_id: toolCall.id ?? '',
         }),
+      );
+      logger.debug(
+        {
+          toolName: toolCall.name,
+          toolCallId: toolCall.id ?? '',
+          round: state.toolCallRound,
+          resultLength: String(result).length,
+        },
+        'toolNode: tool call succeeded',
       );
     } catch (err) {
       logger.warn({ err, toolName: toolCall.name }, 'toolNode: tool execution error');

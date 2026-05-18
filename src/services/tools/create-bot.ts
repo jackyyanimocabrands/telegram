@@ -4,13 +4,17 @@ import {
   botManagementApi,
   BotManagementApiClient,
 } from '../bot-management-api.js';
+import { logger } from '../../utils/logger.js';
 
 export function createCreateBotTool(
   userEmail: string,
   client: BotManagementApiClient = botManagementApi,
+  botId?: string,
+  userId?: string,
 ) {
   return tool(
     async (input) => {
+      logger.debug({ botId, userId }, 'create_bot tool: invoked');
       try {
         const result = await client.createBot(userEmail, {
           name: input.name,
