@@ -2,6 +2,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { ChatOpenAI } from '@langchain/openai';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { ChatDeepSeek } from '@langchain/deepseek';
+import { ChatDeepSeekWithReasoning } from './deepseek.js';
 import { ChatOpenAI as ChatOpenRouter } from '@langchain/openai';
 import { env } from '../../config/env.js';
 
@@ -28,7 +29,7 @@ export interface ApiKeys {
 const defaultConstructors: ModelConstructors = {
   ChatOpenAI,
   ChatAnthropic,
-  ChatDeepSeek,
+  ChatDeepSeek: ChatDeepSeekWithReasoning,
   ChatOpenRouter,
 };
 
