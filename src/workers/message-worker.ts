@@ -46,12 +46,13 @@ export async function processEmailVerificationJob(
   const escapedEmail = escapeMdV2(tokenRow.email);
 
   // Send Telegram message FIRST — if this throws, markNotified is NOT called (job retried)
-  await deps.telegram.sendMessage(
-    botToken,
-    chatId,
-    `✅ Email *${escapedEmail}* verified\\!`,
-    { parse_mode: 'MarkdownV2' },
-  );
+  // Suppressed: the synthetic [email_verified] job below triggers the agent to respond instead
+  // await deps.telegram.sendMessage(
+  //   botToken,
+  //   chatId,
+  //   `✅ Email *${escapedEmail}* verified\\!`,
+  //   { parse_mode: 'MarkdownV2' },
+  // );
   const marked = await markNotified(jti);
   if (marked === 0) {
     logger.warn({ jti }, 'processEmailVerificationJob: markNotified was a no-op (already notified or race)');

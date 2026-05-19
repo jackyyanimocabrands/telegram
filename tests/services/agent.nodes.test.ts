@@ -696,7 +696,7 @@ describe('agentNode', () => {
     expect(invokeArgs[0]).to.be.instanceOf(HumanMessage);
   });
 
-  it('appends ephemeral SystemMessage as last element when plugin returns content', async () => {
+  it('inserts ephemeral SystemMessage one above user message when plugin returns content', async () => {
     const { SystemMessage: SM } = await import('@langchain/core/messages');
     const fakeEphemeralMsg = new SM('[Context]\nCurrent UTC date and time: 2024-01-15T10:00:00.000Z');
     const ephemeralStub = sinon.stub().resolves(fakeEphemeralMsg);
@@ -709,8 +709,9 @@ describe('agentNode', () => {
 
     const [invokeArgs] = stubModel.invoke.firstCall.args as [unknown[]];
     expect(invokeArgs).to.have.length(2);
-    expect(invokeArgs[invokeArgs.length - 1]).to.be.instanceOf(SM);
-    expect((invokeArgs[invokeArgs.length - 1] as InstanceType<typeof SM>).content).to.include('[Context]');
+    expect(invokeArgs[invokeArgs.length - 2]).to.be.instanceOf(SM);
+    expect((invokeArgs[invokeArgs.length - 2] as InstanceType<typeof SM>).content).to.include('[Context]');
+    expect(invokeArgs[invokeArgs.length - 1]).to.be.instanceOf(HumanMessage);
   });
 
   it('does NOT mutate state.messages after agentNode runs', async () => {

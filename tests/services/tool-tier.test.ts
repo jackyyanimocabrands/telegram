@@ -120,36 +120,25 @@ describe('tool-tier', () => {
       expect(names).to.include('web_search');
     });
 
-    it('returns exactly 6 tools for "authenticated" tier', async () => {
+    it('returns exactly 4 tools for "authenticated" tier', async () => {
       const { getToolsForTier } = await buildModule();
       const tools = getToolsForTier('authenticated', deps);
-      expect(tools).to.be.an('array').with.length(6);
+      expect(tools).to.be.an('array').with.length(4);
     });
 
-    it('authenticated tools include clear_email_verification, create_bot, configure_bot, check_bot_username, web_fetch, web_search', async () => {
+    it('authenticated tools include clear_email_verification, check_bot_username, web_fetch, web_search but NOT create_bot or configure_bot', async () => {
       const { getToolsForTier } = await buildModule();
       const tools = getToolsForTier('authenticated', deps);
       const names = tools.map((t: StructuredTool) => t.name);
       expect(names).to.include('clear_email_verification');
-      expect(names).to.include('create_bot');
-      expect(names).to.include('configure_bot');
       expect(names).to.include('check_bot_username');
       expect(names).to.include('web_fetch');
       expect(names).to.include('web_search');
+      // create_bot and configure_bot must NOT be in authenticated tier
+      expect(names).to.not.include('create_bot');
+      expect(names).to.not.include('configure_bot');
       // save_mind_context must NOT be in authenticated tier
       expect(names).to.not.include('save_mind_context');
-    });
-
-    it('passes userEmail to createCreateBotTool', async () => {
-      const { getToolsForTier } = await buildModule();
-      getToolsForTier('authenticated', deps);
-      expect(createCreateBotToolStub.calledWith(deps.userEmail)).to.be.true;
-    });
-
-    it('passes userEmail to createConfigureBotTool', async () => {
-      const { getToolsForTier } = await buildModule();
-      getToolsForTier('authenticated', deps);
-      expect(createConfigureBotToolStub.calledWith(deps.userEmail)).to.be.true;
     });
 
     it('does not call bot management tool factories for "base" tier', async () => {
@@ -172,6 +161,13 @@ describe('tool-tier', () => {
       const { getToolsForTier } = await buildModule();
       getToolsForTier('authenticated', deps);
       expect(createClearEmailVerificationToolStub.called).to.be.true;
+    });
+
+    it('does not call createCreateBotTool or createConfigureBotTool for "authenticated" tier', async () => {
+      const { getToolsForTier } = await buildModule();
+      getToolsForTier('authenticated', deps);
+      expect(createCreateBotToolStub.called).to.be.false;
+      expect(createConfigureBotToolStub.called).to.be.false;
     });
   });
 });

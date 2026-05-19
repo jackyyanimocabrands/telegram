@@ -25,7 +25,8 @@ export function createCreateBotTool(
         });
         return JSON.stringify(result);
       } catch (err) {
-        return err instanceof Error ? err.message : String(err);
+        logger.error({ err, botId, userId }, 'create_bot tool: createBot failed');
+        return 'ERROR: Failed to create Mind. Please try again later.';
       }
     },
     {

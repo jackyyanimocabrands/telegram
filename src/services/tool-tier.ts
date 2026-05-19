@@ -2,8 +2,6 @@ import type { StructuredTool } from '@langchain/core/tools';
 import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
 import {
-  createCreateBotTool,
-  createConfigureBotTool,
   createWebsearchTool,
   createWebfetchTool,
   createVerifyEmailTool,
@@ -74,8 +72,6 @@ export function getToolsForTier(tier: ToolTier, deps: ToolDeps): StructuredTool[
   // authenticated
   return [
     createClearEmailVerificationTool(deps.botId, deps.userId, deps.pool),
-    createCreateBotTool(deps.userEmail, undefined, deps.botId, deps.userId),
-    createConfigureBotTool(deps.userEmail, undefined, deps.botId, deps.userId),
     createCheckBotUsernameTool(deps.botId, deps.userId),
     ...sharedTools,
   ];

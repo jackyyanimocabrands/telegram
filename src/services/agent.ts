@@ -252,7 +252,7 @@ export async function agentNode(
     },
     env,
   );
-  if (ephemeralMsg) messagesForLLM.push(ephemeralMsg);
+  if (ephemeralMsg) messagesForLLM.splice(messagesForLLM.length - 1, 0, ephemeralMsg);
 
   let lastErr: unknown;
   for (let i = 0; i < llmConfig.chat.length; i++) {

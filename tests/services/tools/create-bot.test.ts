@@ -6,13 +6,18 @@ import esmock from 'esmock';
 describe('createCreateBotTool', () => {
   let createCreateBotTool: any;
   let mockClient: { createBot: sinon.SinonStub };
+  let loggerErrorStub: sinon.SinonStub;
 
   beforeEach(async () => {
     mockClient = { createBot: sinon.stub() };
+    loggerErrorStub = sinon.stub();
     const module = await esmock('../../../src/services/tools/create-bot.ts', {
       '../../../src/services/bot-management-api.js': {
         botManagementApi: mockClient,
         BotManagementApiClient: class {},
+      },
+      '../../../src/utils/logger.js': {
+        logger: { debug: sinon.stub(), error: loggerErrorStub },
       },
     });
     createCreateBotTool = module.createCreateBotTool;
@@ -39,10 +44,13 @@ describe('createCreateBotTool', () => {
     });
   });
 
-  it('returns error message string on API error, does not throw', async () => {
-    mockClient.createBot.rejects(new Error('Unauthorized'));
-    const tool = createCreateBotTool('user@example.com', mockClient);
+  it('returns fixed error string on API error, does not throw', async () => {
+    const err = new Error('Unauthorized');
+    mockClient.createBot.rejects(err);
+    const tool = createCreateBotTool('user@example.com', mockClient, 'bot-1', 'user-1');
     const result = await tool.invoke({ name: 'My Bot' });
-    expect(result).to.equal('Unauthorized');
+    expect(result).to.equal('ERROR: Failed to create Mind. Please try again later.');
+    expect(loggerErrorStub.calledOnce).to.be.true;
+    expect(loggerErrorStub.firstCall.args[0]).to.include({ err });
   });
 });

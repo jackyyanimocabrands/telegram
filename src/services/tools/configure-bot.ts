@@ -23,7 +23,8 @@ export function createConfigureBotTool(
         });
         return JSON.stringify(result);
       } catch (err) {
-        return err instanceof Error ? err.message : String(err);
+        logger.error({ err, botId, userId }, 'configure_bot tool: configureBot failed');
+        return 'ERROR: Failed to configure Mind. Please try again later.';
       }
     },
     {

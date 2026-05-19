@@ -101,7 +101,7 @@ describe('processEmailVerificationJob', () => {
 
   // ── 3. Happy path: sendMessage with escaped email (short CTA), markNotified called ────
 
-  it('3. happy path: sendMessage called with MarkdownV2-escaped email (short CTA), markNotified called with jti', async () => {
+  it('3. happy path: sendMessage suppressed, markNotified called with jti', async () => {
     const email = 'user.name@example.com';
     getTokenStub.resolves(makeTokenRow(email));
     const job = makeJob();
@@ -109,31 +109,23 @@ describe('processEmailVerificationJob', () => {
 
     await processEmailVerificationJob(job, deps);
 
-    expect(sendMessageStub.calledOnce).to.be.true;
-    const [token, chatId, text] = sendMessageStub.firstCall.args;
-    expect(token).to.equal(MANAGER_BOT_TOKEN);
-    expect(chatId).to.equal(job.data.chatId);
-    // Exact CTA format — no trailing text
-    expect(text).to.equal('✅ Email *user\\.name@example\\.com* verified\\!');
+    // sendMessage is suppressed — synthetic [email_verified] job triggers the agent instead
+    expect(sendMessageStub.called).to.be.false;
+    // Suppressed assertion: exact CTA format
+    // expect(text).to.equal('✅ Email *user\\.name@example\\.com* verified\\!');
 
     expect(markNotifiedStub.calledOnceWith(job.data.jti)).to.be.true;
   });
 
-  // ── 4. sendMessage throws → markNotified NOT called, error propagates ─────
+  // ── 4. sendMessage is suppressed — markNotified IS called ───────────────────
 
-  it('4. sendMessage throws → markNotified NOT called, error propagates', async () => {
+  it('4. sendMessage suppressed → markNotified IS called, resolves without error', async () => {
     getTokenStub.resolves(makeTokenRow());
-    sendMessageStub.rejects(new Error('Telegram API error'));
 
-    let threw = false;
-    try {
-      await processEmailVerificationJob(makeJob(), makeDeps());
-    } catch (err) {
-      threw = true;
-      expect((err as Error).message).to.include('Telegram API error');
-    }
-    expect(threw).to.be.true;
-    expect(markNotifiedStub.called).to.be.false;
+    await processEmailVerificationJob(makeJob(), makeDeps());
+
+    expect(sendMessageStub.called).to.be.false;
+    expect(markNotifiedStub.calledOnce).to.be.true;
   });
 
   // ── 5. markNotified returns 0 (race) → logs warn but does NOT throw ───────
@@ -145,23 +137,22 @@ describe('processEmailVerificationJob', () => {
     // Should resolve without throwing
     await processEmailVerificationJob(makeJob(), makeDeps());
 
-    expect(sendMessageStub.calledOnce).to.be.true;
+    // sendMessage is suppressed
+    expect(sendMessageStub.called).to.be.false;
     expect(markNotifiedStub.calledOnce).to.be.true;
   });
 
   // ── 6. Email with special MarkdownV2 chars escaped correctly ──────────────
 
-  it('6. email user.name+tag@x.com is fully escaped for MarkdownV2 in sendMessage call', async () => {
+  it('6. email user.name+tag@x.com — sendMessage suppressed, markNotified still called', async () => {
     const email = 'user.name+tag@x.com';
     getTokenStub.resolves(makeTokenRow(email));
 
     await processEmailVerificationJob(makeJob(), makeDeps());
 
-    expect(sendMessageStub.calledOnce).to.be.true;
-    const [, , text] = sendMessageStub.firstCall.args;
-    // All special MarkdownV2 chars in the email should be escaped
-    // . → \. , + → \+, @ stays as-is (not a MarkdownV2 reserved char per the regex)
-    expect(text).to.include('user\\.name\\+tag@x\\.com');
+    // sendMessage is suppressed — no text assertion needed
+    expect(sendMessageStub.called).to.be.false;
+    expect(markNotifiedStub.calledOnce).to.be.true;
   });
 
   // ── 7. Lock acquired → managerQueue.add called with correct args ──────────
@@ -223,6 +214,7 @@ describe('processEmailVerificationJob', () => {
       botUsername: 'TestBot',
     };
     await processEmailVerificationJob(makeJob(), deps);
-    expect(sendMessageStub.calledOnce).to.be.true;
+    // sendMessage is suppressed
+    expect(sendMessageStub.called).to.be.false;
   });
 });
