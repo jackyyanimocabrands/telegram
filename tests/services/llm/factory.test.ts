@@ -1,6 +1,7 @@
-import { describe, it } from 'mocha';
+import { describe, it, afterEach } from 'mocha';
 import { expect } from 'chai';
 import sinon from 'sinon';
+import esmock from 'esmock';
 import { LlmProviderFactory } from '../../../src/services/llm/factory.js';
 
 // Minimal stub constructor that satisfies BaseChatModel's `invoke` interface
@@ -79,6 +80,61 @@ describe('LlmProviderFactory', () => {
       const a = factory.create('openai',   'gpt-4o');
       const b = factory.create('deepseek', 'deepseek-chat');
       expect(a).to.not.equal(b);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Default constructor wiring: factory uses ChatDeepSeekWithReasoning
+  // -------------------------------------------------------------------------
+  describe('default deepseek constructor is ChatDeepSeekWithReasoning', () => {
+    let factoryMod: typeof import('../../../src/services/llm/factory.js');
+    let deepseekMod: typeof import('../../../src/services/llm/deepseek.js');
+
+    afterEach(async () => {
+      await esmock.purge(factoryMod);
+    });
+
+    it('creates a ChatDeepSeekWithReasoning instance when no constructor override is supplied', async () => {
+      // Stub only @langchain/deepseek so no real network/env is needed.
+      // The real ChatDeepSeekWithReasoning (from deepseek.ts) extends this stub.
+      class FakeChatDeepSeek {
+        constructor(_fields: unknown) {}
+        invoke = sinon.stub().resolves({ content: 'stub' });
+        stream = sinon.stub();
+      }
+
+      // esmock the factory module so that its transitive import of
+      // @langchain/deepseek resolves to our fake.  We also need to re-import
+      // deepseek.ts inside the same esmock scope so that ChatDeepSeekWithReasoning
+      // extends FakeChatDeepSeek.
+      deepseekMod = await esmock('../../../src/services/llm/deepseek.js', {
+        '@langchain/deepseek': { ChatDeepSeek: FakeChatDeepSeek },
+        '../../../src/utils/logger.js': { logger: { warn: sinon.stub(), info: sinon.stub(), error: sinon.stub() } },
+      });
+
+      factoryMod = await esmock('../../../src/services/llm/factory.js', {
+        '@langchain/deepseek': { ChatDeepSeek: FakeChatDeepSeek },
+        '../../../src/services/llm/deepseek.js': deepseekMod,
+        // Prevent env validation from failing — provide minimal stubs
+        '../../../src/config/env.js': {
+          env: {
+            OPENAI_API_KEY: undefined,
+            ANTHROPIC_API_KEY: undefined,
+            DEEPSEEK_API_KEY: 'sk-test',
+            OPENROUTER_API_KEY: undefined,
+          },
+        },
+      });
+
+      const { LlmProviderFactory: RealFactory } = factoryMod;
+      const { ChatDeepSeekWithReasoning } = deepseekMod;
+
+      // No constructor overrides — uses the default deepseek constructor
+      const factory = new RealFactory({}, { deepseek: 'sk-test' });
+      const instance = factory.create('deepseek', 'deepseek-reasoner');
+
+      expect(instance).to.be.instanceOf(ChatDeepSeekWithReasoning);
+      expect(instance).to.be.instanceOf(FakeChatDeepSeek);
     });
   });
 });

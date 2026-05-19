@@ -82,6 +82,7 @@ describe('ChatDeepSeekWithReasoning', () => {
 
     mod = await esmock('../../../src/services/llm/deepseek.js', {
       '@langchain/deepseek': { ChatDeepSeek: FakeChatDeepSeek },
+      '../../../src/utils/logger.js': { logger: { warn: sinon.stub(), info: sinon.stub(), error: sinon.stub() } },
     });
   });
 
@@ -203,16 +204,158 @@ describe('ChatDeepSeekWithReasoning', () => {
     expect((assistantParam as { reasoning_content?: string }).reasoning_content).to.equal('Stream reasoning here');
   });
 
-  it('clears _pendingMessages after _generate completes', async () => {
+  it('concurrent _streamResponseChunks calls on the same instance inject correct reasoning_content for each call independently', async () => {
     const { ChatDeepSeekWithReasoning } = mod;
-    const instance = new ChatDeepSeekWithReasoning({ apiKey: 'sk-test', model: 'deepseek-reasoner' }) as unknown as {
-      _pendingMessages: BaseMessage[];
-      _generate(m: BaseMessage[], o: unknown): Promise<unknown>;
+    const instance = new ChatDeepSeekWithReasoning({ apiKey: 'sk-test', model: 'deepseek-reasoner' });
+
+    const messagesA: BaseMessage[] = [
+      makeHumanMessage('Stream question A'),
+      makeAIMessage('Stream answer A', 'Stream reasoning for A'),
+      makeHumanMessage('Stream follow up A'),
+    ];
+
+    const messagesB: BaseMessage[] = [
+      makeHumanMessage('Stream question B'),
+      makeAIMessage('Stream answer B', 'Stream reasoning for B'),
+      makeHumanMessage('Stream follow up B'),
+    ];
+
+    // Drain both generators concurrently on the same cached instance
+    async function drainGenerator(gen: AsyncGenerator<unknown>): Promise<void> {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _ of gen) { /* drain */ }
+    }
+
+    await Promise.all([
+      drainGenerator(instance._streamResponseChunks(messagesA, {} as never)),
+      drainGenerator(instance._streamResponseChunks(messagesB, {} as never)),
+    ]);
+
+    expect(superCompletionWithRetryStub.callCount).to.equal(2);
+
+    // Collect reasoning_content values from each completionWithRetry call
+    const reasoningValues = superCompletionWithRetryStub.args.map((args) => {
+      const req = args[0] as { messages: Array<{ role: string; reasoning_content?: string }> };
+      const assistantParam = req.messages.find((m) => m.role === 'assistant');
+      return assistantParam?.reasoning_content;
+    });
+
+    // Both calls must have injected their own reasoning_content — no cross-contamination
+    expect(reasoningValues).to.include('Stream reasoning for A');
+    expect(reasoningValues).to.include('Stream reasoning for B');
+    // Each value must appear exactly once
+    expect(reasoningValues.filter((v) => v === 'Stream reasoning for A')).to.have.length(1);
+    expect(reasoningValues.filter((v) => v === 'Stream reasoning for B')).to.have.length(1);
+  });
+
+  it('no longer exposes _pendingMessages — state is scoped via AsyncLocalStorage', async () => {
+    // This test documents the post-refactor invariant: the instance has no
+    // _pendingMessages field (removed in favour of AsyncLocalStorage).
+    const { ChatDeepSeekWithReasoning } = mod;
+    const instance = new ChatDeepSeekWithReasoning({ apiKey: 'sk-test', model: 'deepseek-reasoner' }) as unknown as Record<string, unknown>;
+
+    await instance['_generate']([makeHumanMessage('hi')], {} as never);
+
+    expect(instance['_pendingMessages']).to.be.undefined;
+  });
+
+  // -------------------------------------------------------------------------
+  // QA Blocker 2 — Concurrency: concurrent _generate calls on same instance
+  // -------------------------------------------------------------------------
+
+  it('concurrent _generate calls on the same instance inject correct reasoning_content for each call independently', async () => {
+    const { ChatDeepSeekWithReasoning } = mod;
+    const instance = new ChatDeepSeekWithReasoning({ apiKey: 'sk-test', model: 'deepseek-reasoner' });
+
+    const messagesA: BaseMessage[] = [
+      makeHumanMessage('Question A'),
+      makeAIMessage('Answer A', 'Reasoning for A'),
+      makeHumanMessage('Follow up A'),
+    ];
+
+    const messagesB: BaseMessage[] = [
+      makeHumanMessage('Question B'),
+      makeAIMessage('Answer B', 'Reasoning for B'),
+      makeHumanMessage('Follow up B'),
+    ];
+
+    // Fire both concurrently on the same cached instance
+    await Promise.all([
+      instance._generate(messagesA, {} as never),
+      instance._generate(messagesB, {} as never),
+    ]);
+
+    expect(superCompletionWithRetryStub.callCount).to.equal(2);
+
+    // Collect the reasoning_content values from each completionWithRetry call
+    const reasoningValues = superCompletionWithRetryStub.args.map((args) => {
+      const req = args[0] as { messages: Array<{ role: string; reasoning_content?: string }> };
+      const assistantParam = req.messages.find((m) => m.role === 'assistant');
+      return assistantParam?.reasoning_content;
+    });
+
+    // Both calls must have injected their own reasoning_content — no cross-contamination
+    expect(reasoningValues).to.include('Reasoning for A');
+    expect(reasoningValues).to.include('Reasoning for B');
+    // Each value must appear exactly once
+    expect(reasoningValues.filter((v) => v === 'Reasoning for A')).to.have.length(1);
+    expect(reasoningValues.filter((v) => v === 'Reasoning for B')).to.have.length(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // QA Blocker 3 — Error path: failed call does not leak state to next call
+  // -------------------------------------------------------------------------
+
+  it('subsequent _generate call after a failed call uses its own messages, not stale state', async () => {
+    // First call throws; second call must still see its own messages.
+    let callCount = 0;
+    superCompletionWithRetryStub.callsFake((..._args: unknown[]) => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.reject(new Error('simulated API error'));
+      }
+      return Promise.resolve({
+        choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+      });
+    });
+
+    const { ChatDeepSeekWithReasoning } = mod;
+    const instance = new ChatDeepSeekWithReasoning({ apiKey: 'sk-test', model: 'deepseek-reasoner' });
+
+    const firstMessages: BaseMessage[] = [
+      makeHumanMessage('First call'),
+      makeAIMessage('First AI reply', 'Reasoning from first call'),
+      makeHumanMessage('Continue first'),
+    ];
+
+    const secondMessages: BaseMessage[] = [
+      makeHumanMessage('Second call'),
+      makeAIMessage('Second AI reply', 'Reasoning from second call'),
+      makeHumanMessage('Continue second'),
+    ];
+
+    // First call must reject
+    let firstCallError: unknown;
+    try {
+      await instance._generate(firstMessages, {} as never);
+    } catch (err) {
+      firstCallError = err;
+    }
+    expect(firstCallError).to.be.instanceOf(Error);
+    expect((firstCallError as Error).message).to.equal('simulated API error');
+
+    // Second call must succeed and use its own messages
+    await instance._generate(secondMessages, {} as never);
+
+    expect(superCompletionWithRetryStub.callCount).to.equal(2);
+    const secondCallRequest = superCompletionWithRetryStub.secondCall.args[0] as {
+      messages: Array<{ role: string; reasoning_content?: string }>;
     };
-
-    await instance._generate([makeHumanMessage('hi')], {} as never);
-
-    expect(instance._pendingMessages).to.have.length(0);
+    const assistantParam = secondCallRequest.messages.find((m) => m.role === 'assistant');
+    expect(assistantParam).to.exist;
+    // Must have injected the second call's reasoning only
+    expect(assistantParam?.reasoning_content).to.equal('Reasoning from second call');
   });
 });
 
@@ -230,6 +373,7 @@ describe('sanitizeToolCallSequences', () => {
     }
     mod = await esmock('../../../src/services/llm/deepseek.js', {
       '@langchain/deepseek': { ChatDeepSeek: FakeChatDeepSeek },
+      '../../../src/utils/logger.js': { logger: { warn: sinon.stub(), info: sinon.stub(), error: sinon.stub() } },
     });
   });
 
@@ -240,12 +384,12 @@ describe('sanitizeToolCallSequences', () => {
 
   type Param = import('openai').default.Chat.Completions.ChatCompletionMessageParam;
 
-  function assistantWithToolCalls(ids: string[]): Param {
+  function assistantWithToolCalls(ids: (string | undefined)[]): Param {
     return {
       role: 'assistant',
       content: null,
       tool_calls: ids.map((id) => ({
-        id,
+        id: id as string,
         type: 'function' as const,
         function: { name: 'fn', arguments: '{}' },
       })),
@@ -323,6 +467,128 @@ describe('sanitizeToolCallSequences', () => {
     expect(result[2].role).to.equal('assistant');
     expect(result[3].role).to.equal('tool');
   });
+
+  // -------------------------------------------------------------------------
+  // QA Blocker 5 — Undefined tool_call id edge case
+  // -------------------------------------------------------------------------
+
+  it('mixed valid/undefined tool_call ids: group is KEPT when all string ids are answered', () => {
+    // tool_calls with undefined id are excluded from expectedIds — only
+    // string ids must be answered. So a group where the only string id IS
+    // answered is treated as complete and kept.
+    const { sanitizeToolCallSequences } = mod;
+    const input: Param[] = [
+      // One real id + one undefined id
+      assistantWithToolCalls(['real-id', undefined]),
+      toolMessage('real-id'),
+      { role: 'user', content: 'follow' },
+    ];
+    const result = sanitizeToolCallSequences(input);
+    // expectedIds = Set { 'real-id' } (undefined filtered out)
+    // answeredIds = Set { 'real-id' }
+    // isComplete  = true → group is KEPT
+    expect(result).to.have.length(3);
+    expect(result[0].role).to.equal('assistant');
+    expect(result[1].role).to.equal('tool');
+    expect(result[2].role).to.equal('user');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// injectReasoningContent — unit tests (named export)
+// ---------------------------------------------------------------------------
+
+describe('injectReasoningContent', () => {
+  let mod: typeof import('../../../src/services/llm/deepseek.js');
+  let warnStub: sinon.SinonStub;
+
+  beforeEach(async () => {
+    warnStub = sinon.stub();
+    class FakeChatDeepSeek {
+      constructor(_fields: unknown) {}
+    }
+    mod = await esmock('../../../src/services/llm/deepseek.js', {
+      '@langchain/deepseek': { ChatDeepSeek: FakeChatDeepSeek },
+      '../../../src/utils/logger.js': { logger: { warn: warnStub, info: sinon.stub(), error: sinon.stub() } },
+    });
+  });
+
+  afterEach(async () => {
+    sinon.restore();
+    await esmock.purge(mod);
+  });
+
+  type Param = import('openai').default.Chat.Completions.ChatCompletionMessageParam;
+
+  // -------------------------------------------------------------------------
+  // QA Blocker 4 — Positional mapping mismatch (fewer AIMessages than params)
+  // -------------------------------------------------------------------------
+
+  it('gracefully handles fewer AIMessages than assistant params (no crash, no wrong injection)', () => {
+    const { injectReasoningContent } = mod;
+
+    // One human message (zero AIMessages)
+    const originalMessages: BaseMessage[] = [makeHumanMessage('Hello')];
+
+    // One assistant param but no source AIMessage to match against
+    const mappedParams: Param[] = [
+      { role: 'assistant', content: 'x' },
+    ];
+
+    let result: Param[];
+    expect(() => {
+      result = injectReasoningContent(originalMessages, mappedParams);
+    }).to.not.throw();
+
+    // No AIMessage to pull reasoning_content from → no injection
+    const assistantParam = result![0] as Record<string, unknown>;
+    expect(assistantParam.reasoning_content).to.be.undefined;
+  });
+
+  it('strips null bytes from reasoning_content before injection', () => {
+    const { injectReasoningContent } = mod;
+
+    const originalMessages: BaseMessage[] = [
+      makeHumanMessage('hi'),
+      makeAIMessage('reply', 'good\0content\0here'),
+      makeHumanMessage('follow up'),
+    ];
+
+    const mappedParams: Param[] = [
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'reply' },
+      { role: 'user', content: 'follow up' },
+    ];
+
+    const result = injectReasoningContent(originalMessages, mappedParams);
+    const assistantParam = result.find((p) => p.role === 'assistant') as Record<string, unknown>;
+    expect(assistantParam.reasoning_content).to.equal('goodcontenthere');
+  });
+
+  it('truncates reasoning_content exceeding MAX_REASONING_CONTENT_LENGTH and emits a warning', () => {
+    const { injectReasoningContent } = mod;
+
+    const oversized = 'x'.repeat(32_769); // 1 byte over the 32 KB limit
+
+    const originalMessages: BaseMessage[] = [
+      makeHumanMessage('hi'),
+      makeAIMessage('reply', oversized),
+      makeHumanMessage('follow up'),
+    ];
+
+    const mappedParams: Param[] = [
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'reply' },
+      { role: 'user', content: 'follow up' },
+    ];
+
+    const result = injectReasoningContent(originalMessages, mappedParams);
+    const assistantParam = result.find((p) => p.role === 'assistant') as Record<string, unknown>;
+
+    expect((assistantParam.reasoning_content as string).length).to.equal(32_768);
+    expect(warnStub.calledOnce).to.be.true;
+    expect(warnStub.firstCall.args[0]).to.deep.include({ originalLength: 32_769 });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -360,6 +626,7 @@ describe('ChatDeepSeekWithReasoning — completionWithRetry sanitises tool-call 
 
     mod = await esmock('../../../src/services/llm/deepseek.js', {
       '@langchain/deepseek': { ChatDeepSeek: FakeChatDeepSeek },
+      '../../../src/utils/logger.js': { logger: { warn: sinon.stub(), info: sinon.stub(), error: sinon.stub() } },
     });
   });
 

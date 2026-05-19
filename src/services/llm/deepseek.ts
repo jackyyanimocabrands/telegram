@@ -1,8 +1,10 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { ChatDeepSeek } from '@langchain/deepseek';
 import { AIMessage, type BaseMessage } from '@langchain/core/messages';
 import type { CallbackManagerForLLMRun } from '@langchain/core/callbacks/manager';
 import type { ChatGenerationChunk, ChatResult } from '@langchain/core/outputs';
 import type OpenAI from 'openai';
+import { logger } from '../../utils/logger.js';
 
 /**
  * Strips incomplete tool-call groups from a serialised OpenAI messages array.
@@ -77,6 +79,9 @@ export function sanitizeToolCallSequences(
   return result;
 }
 
+/** Maximum byte length for injected reasoning_content (32 KB). */
+const MAX_REASONING_CONTENT_LENGTH = 32_768;
+
 /**
  * Injects `reasoning_content` from AIMessage.additional_kwargs into the
  * serialised OpenAI-format message params so DeepSeek thinking-mode
@@ -85,8 +90,13 @@ export function sanitizeToolCallSequences(
  * The DeepSeek API requires that when an assistant message was produced with
  * reasoning_content, that same field must be passed back on subsequent turns.
  * @langchain/openai's converter omits it, so we inject it here.
+ *
+ * Safety:
+ * - Null bytes (`\0`) are stripped from the value before injection.
+ * - Values exceeding MAX_REASONING_CONTENT_LENGTH chars are truncated and
+ *   a warning is emitted.
  */
-function injectReasoningContent(
+export function injectReasoningContent(
   originalMessages: BaseMessage[],
   mappedParams: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
@@ -102,14 +112,31 @@ function injectReasoningContent(
       const src = aiMessages[aiIdx++];
       const reasoning = src?.additional_kwargs?.reasoning_content;
       if (typeof reasoning === 'string' && reasoning.length > 0) {
+        // Strip null bytes then enforce size cap
+        const sanitized = reasoning.replace(/\0/g, '');
+        const safe = sanitized.slice(0, MAX_REASONING_CONTENT_LENGTH);
+        if (safe.length < reasoning.length) {
+          logger.warn(
+            { originalLength: reasoning.length },
+            'deepseek: reasoning_content truncated before injection',
+          );
+        }
         // Cast through unknown — reasoning_content is a DeepSeek extension
         // not present in the base OpenAI type.
-        return { ...param, reasoning_content: reasoning } as unknown as OpenAI.Chat.Completions.ChatCompletionMessageParam;
+        return { ...param, reasoning_content: safe } as unknown as OpenAI.Chat.Completions.ChatCompletionMessageParam;
       }
     }
     return param;
   });
 }
+
+// ---------------------------------------------------------------------------
+// Module-level AsyncLocalStorage — one store shared across all instances.
+// Each async call chain (from _generate / _streamResponseChunks) runs in its
+// own context, so concurrent jobs on the same cached instance each see only
+// their own BaseMessage[].
+// ---------------------------------------------------------------------------
+const _messagesStorage = new AsyncLocalStorage<BaseMessage[]>();
 
 /**
  * Drop-in replacement for ChatDeepSeek that correctly handles multi-turn
@@ -120,26 +147,24 @@ function injectReasoningContent(
  * overrides `completionWithRetry` to inject the stored `reasoning_content`
  * (from `AIMessage.additional_kwargs`) into the already-serialised message
  * params just before the HTTP request is dispatched.
+ *
+ * Concurrency safety: `AsyncLocalStorage` scopes each call's BaseMessage[]
+ * to its own async context, eliminating the data race that affected the
+ * previous `_pendingMessages` instance-field approach when the same cached
+ * instance served concurrent BullMQ jobs.
  */
 export class ChatDeepSeekWithReasoning extends ChatDeepSeek {
-  /**
-   * Holds the original BaseMessage[] for the duration of a _generate /
-   * _streamResponseChunks call so that completionWithRetry can access the
-   * additional_kwargs that contain reasoning_content.
-   */
-  private _pendingMessages: BaseMessage[] = [];
-
   override async _generate(
     messages: BaseMessage[],
     options: this['ParsedCallOptions'],
     runManager?: CallbackManagerForLLMRun,
   ): Promise<ChatResult> {
-    this._pendingMessages = messages;
-    try {
-      return await super._generate(messages, options, runManager);
-    } finally {
-      this._pendingMessages = [];
-    }
+    // Run super._generate inside an AsyncLocalStorage context so that
+    // completionWithRetry (called deeper in the chain) can retrieve the
+    // original messages without any instance-level state.
+    return _messagesStorage.run(messages, () =>
+      super._generate(messages, options, runManager),
+    );
   }
 
   override async *_streamResponseChunks(
@@ -147,12 +172,37 @@ export class ChatDeepSeekWithReasoning extends ChatDeepSeek {
     options: this['ParsedCallOptions'],
     runManager?: CallbackManagerForLLMRun,
   ): AsyncGenerator<ChatGenerationChunk> {
-    this._pendingMessages = messages;
-    try {
-      yield* super._streamResponseChunks(messages, options, runManager);
-    } finally {
-      this._pendingMessages = [];
-    }
+    // Collect the parent generator inside the run() context so that
+    // completionWithRetry (called by the parent during iteration) sees
+    // the correct messages in _messagesStorage. Re-yield chunks outside
+    // the run() scope — chunk objects themselves carry no storage reference.
+    //
+    // Tradeoffs:
+    // - This buffers all chunks in memory before yielding them to the caller.
+    //   For typical DeepSeek response sizes this is acceptable (a few KB of
+    //   text chunks). The alternative (true streaming) would require enterWith()
+    //   which carries a context-leakage risk: enterWith() mutates the async
+    //   context of the generator's async resource and does NOT have a bounded
+    //   lifetime, potentially contaminating sibling async resources in concurrent
+    //   streaming calls on the same cached instance.
+    // - The storage context is properly scoped: completionWithRetry is called
+    //   within the run() callback and sees the correct messages.
+    // - Error propagation is preserved via the streamError variable.
+    const chunks: ChatGenerationChunk[] = [];
+    let streamError: unknown;
+
+    await _messagesStorage.run(messages, async () => {
+      try {
+        for await (const chunk of super._streamResponseChunks(messages, options, runManager)) {
+          chunks.push(chunk);
+        }
+      } catch (err) {
+        streamError = err;
+      }
+    });
+
+    if (streamError !== undefined) throw streamError;
+    yield* chunks;
   }
 
   // Overload signatures matching parent class
@@ -169,8 +219,9 @@ export class ChatDeepSeekWithReasoning extends ChatDeepSeek {
     requestOptions?: OpenAI.RequestOptions,
   ): Promise<OpenAI.Chat.Completions.ChatCompletion | AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
     if (Array.isArray(request.messages)) {
-      const injected = this._pendingMessages.length > 0
-        ? injectReasoningContent(this._pendingMessages, request.messages)
+      const originalMessages = _messagesStorage.getStore() ?? [];
+      const injected = originalMessages.length > 0
+        ? injectReasoningContent(originalMessages, request.messages)
         : request.messages;
       request = {
         ...request,
@@ -178,6 +229,9 @@ export class ChatDeepSeekWithReasoning extends ChatDeepSeek {
       };
     }
     // Cast needed because overload resolution on super doesn't narrow here
-    return super.completionWithRetry(request as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming, requestOptions) as Promise<OpenAI.Chat.Completions.ChatCompletion | AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>>;
+    return super.completionWithRetry(
+      request as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
+      requestOptions,
+    ) as Promise<OpenAI.Chat.Completions.ChatCompletion | AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>>;
   }
 }
