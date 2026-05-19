@@ -21,7 +21,7 @@ import { logger } from '../../utils/logger.js';
  * - A complete group (all tool_call_ids answered) is kept intact.
  * - An assistant message with no `tool_calls` / empty `tool_calls` is untouched.
  * - A `tool` message that appears without a preceding assistant+tool_calls is
- *   left in place (defensive — we don't know its origin).
+ *   dropped — orphan tool messages cause DeepSeek to return 400.
  */
 export function sanitizeToolCallSequences(
   params: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
@@ -71,7 +71,11 @@ export function sanitizeToolCallSequences(
 
       i = j; // advance past both assistant and tool messages
     } else {
-      result.push(param);
+      // Drop orphan tool messages — tool messages without a preceding complete
+      // assistant+tool_calls group cause DeepSeek 400.
+      if (param.role !== 'tool') {
+        result.push(param);
+      }
       i++;
     }
   }

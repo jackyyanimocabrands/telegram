@@ -440,7 +440,7 @@ describe('sanitizeToolCallSequences', () => {
     expect(result[0].role).to.equal('user');
   });
 
-  it('keeps an orphan tool message that has no preceding assistant+tool_calls', () => {
+  it('drops an orphan tool message that has no preceding assistant+tool_calls', () => {
     const { sanitizeToolCallSequences } = mod;
     const input: Param[] = [
       { role: 'user', content: 'hi' },
@@ -448,8 +448,23 @@ describe('sanitizeToolCallSequences', () => {
       { role: 'user', content: 'follow' },
     ];
     const result = sanitizeToolCallSequences(input);
-    expect(result).to.have.length(3);
-    expect(result[1].role).to.equal('tool');
+    expect(result).to.have.length(2);
+    expect(result[0].role).to.equal('user');
+    expect(result[1].role).to.equal('user');
+  });
+
+  it('drops multiple consecutive orphan tool messages', () => {
+    const { sanitizeToolCallSequences } = mod;
+    const input: Param[] = [
+      { role: 'user', content: 'hi' },
+      { role: 'tool', content: 'orphan 1', tool_call_id: 'orphan-id-1' } as Param,
+      { role: 'tool', content: 'orphan 2', tool_call_id: 'orphan-id-2' } as Param,
+      { role: 'user', content: 'follow' },
+    ];
+    const result = sanitizeToolCallSequences(input);
+    expect(result).to.have.length(2);
+    expect(result[0].role).to.equal('user');
+    expect(result[1].role).to.equal('user');
   });
 
   it('keeps two consecutive complete groups', () => {
