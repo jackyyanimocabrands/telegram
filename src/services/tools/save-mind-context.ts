@@ -11,6 +11,12 @@ export const SAVE_MIND_CONTEXT_ERROR_MSG = 'ERROR: Failed to save use case. Plea
 export const MIND_USE_CASE_VALUES = ['General Assistant', 'Research', 'Customer Support', 'Coding', 'Writing'] as const;
 export type MindUseCase = typeof MIND_USE_CASE_VALUES[number];
 
+// Module-level assertion: guard against future values containing template placeholder characters
+// that could be exploited via interpolate() at runtime.
+for (const v of MIND_USE_CASE_VALUES) {
+  if (/[{}]/.test(v)) throw new Error('MIND_USE_CASE_VALUES member contains template placeholder characters: ' + v);
+}
+
 export function createSaveMindContextTool(botId: string, userId: string, pool: Pool = defaultPool) {
   const userIdNum = Number(userId);
   if (!Number.isFinite(userIdNum) || userIdNum <= 0) {
@@ -31,7 +37,7 @@ export function createSaveMindContextTool(botId: string, userId: string, pool: P
       name: 'save_mind_context',
       description: 'Save the user\'s confirmed Mind use case. Call this once the user has chosen their use case. Allowed values: General Assistant, Research, Customer Support, Coding, Writing.',
       schema: z.object({
-        use_case: z.enum(['General Assistant', 'Research', 'Customer Support', 'Coding', 'Writing'])
+        use_case: z.enum(MIND_USE_CASE_VALUES)
           .describe('The confirmed use case for the Mind. Must be one of the predefined options.'),
       }),
     },

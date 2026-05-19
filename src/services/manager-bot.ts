@@ -17,6 +17,77 @@ import type { ManagerMessageJobData } from '../queues/types.js';
 
 const TELEGRAM_USERNAME_RE = /^[a-zA-Z0-9_]{5,32}$/;
 
+export function parseCommand(text: string): string | null {
+  const match = text.match(/^\/([a-z0-9_]{1,31})(?:@\w+)?(?:\s|$)/i);
+  return (match && match[1]) ? match[1].toLowerCase() : null;
+}
+
+/**
+ * Handle /start and /help commands with per-user throttle protection.
+ * Returns `true` if a command was handled (caller should return early),
+ * `false` if no command matched and normal processing should continue.
+ */
+async function handleCommands(
+  text: string,
+  from: NonNullable<Message['from']>,
+  chatId: number,
+  telegram: TelegramClient,
+  token: string,
+): Promise<boolean> {
+  const command = parseCommand(text);
+  if (command !== 'start' && command !== 'help') return false;
+
+  const cmdConversationId = `manager-cmd:${from.id}`;
+
+  // Apply per-user throttle to command replies — fail-open on Redis errors
+  if (env.MANAGER_THROTTLE_MS > 0) {
+    try {
+      const throttle = await checkThrottle(cmdConversationId, env.MANAGER_THROTTLE_MS);
+      if (!throttle.allowed) {
+        const seconds = Math.ceil(throttle.retryAfterMs / 1000);
+        try {
+          await telegram.sendMessage(
+            token,
+            chatId,
+            `Please wait ${seconds} second${seconds !== 1 ? 's' : ''} before sending another message.`,
+          );
+        } catch (err) {
+          logger.warn({ err, chatId }, 'handleCommands: failed to send throttle reply');
+        }
+        return true;
+      }
+    } catch (err) {
+      logger.warn({ err, userId: from.id }, 'handleCommands: throttle check failed, proceeding');
+    }
+  }
+
+  if (command === 'start') {
+    const firstName = (from.first_name ?? '').replace(/[^a-zA-Z0-9 \-']/g, '').slice(0, 50).trim() || 'there';
+    try {
+      await telegram.sendMessage(
+        token,
+        chatId,
+        `👋 Hey ${firstName}! Welcome to HelloMinds.\n\nI'm your personal AI assistant — here to help with everyday tasks and guide you in creating your own Mind: a personal AI agent with its own identity, persistent memory, and the ability to act on your behalf.\n\nWhat can I help you with today?`,
+      );
+    } catch (err) {
+      logger.warn({ err, chatId }, 'handleCommands: failed to send /start reply');
+    }
+    return true;
+  }
+
+  // command === 'help'
+  try {
+    await telegram.sendMessage(
+      token,
+      chatId,
+      `Here's what I can do:\n\n• Answer questions and help with everyday tasks\n• Search the web and look things up\n• Guide you through creating your own Mind — a personal AI agent built for you\n\nCommands:\n  /start – start or restart the conversation\n  /help  – show this message\n\nJust send me a message to get started!`,
+    );
+  } catch (err) {
+    logger.warn({ err, chatId }, 'handleCommands: failed to send /help reply');
+  }
+  return true;
+}
+
 /**
  * Webhook-facing function. Checks throttle + lock gate, enqueues the job,
  * and returns immediately (~2ms). All LLM work happens in the worker.
@@ -37,8 +108,16 @@ export async function enqueueManagerMessage(
     return;
   }
 
+  if (!text) {
+    logger.info({ chatId, userId: from.id }, 'enqueueManagerMessage: empty text, ignoring');
+    return;
+  }
+
   logger.info({ chatId, userId: from.id, textLength: text.length }, 'enqueueManagerMessage: received');
   logger.trace({ chatId, userId: from.id, text }, 'enqueueManagerMessage: message text');
+
+  // Handle /start and /help commands — includes throttle; no lock needed
+  if (await handleCommands(text, from, chatId, telegram, managerBotToken)) return;
 
   const conversationId = `manager:${from.id}`;
 
@@ -48,11 +127,15 @@ export async function enqueueManagerMessage(
       const throttle = await checkThrottle(conversationId, env.MANAGER_THROTTLE_MS);
       if (!throttle.allowed) {
         const seconds = Math.ceil(throttle.retryAfterMs / 1000);
-        await telegram.sendMessage(
-          managerBotToken,
-          chatId,
-          `Please wait ${seconds} second${seconds !== 1 ? 's' : ''} before sending another message.`,
-        );
+        try {
+          await telegram.sendMessage(
+            managerBotToken,
+            chatId,
+            `Please wait ${seconds} second${seconds !== 1 ? 's' : ''} before sending another message.`,
+          );
+        } catch (err) {
+          logger.warn({ err, chatId }, 'enqueueManagerMessage: failed to send throttle reply');
+        }
         return;
       }
     } catch (err) {
@@ -124,6 +207,8 @@ export async function processManagerMessage(
     .replace(/[^a-zA-Z0-9 \-']/g, '')
     .slice(0, 50)
     .trim() || 'there';
+
+  let thinkingTimer: ReturnType<typeof setTimeout> | undefined;
 
   try {
     const [managedBot, toolsetStateResult] = await Promise.all([
@@ -260,8 +345,8 @@ Keep all replies short and conversational. Politely decline anything unrelated t
       }
     };
 
-    const draftId = Math.floor(Date.now() + Math.random() * 1000);
-    setTimeout(() => {
+    const draftId = Date.now();
+    thinkingTimer = setTimeout(() => {
       telegram.sendMessageDraft(managerBotToken, chatId, draftId, 'Thinking').catch((err: unknown) => {
         logger.warn({ err, chatId }, 'sendMessageDraft (thinking) failed (non-fatal)');
       });
@@ -288,6 +373,7 @@ Keep all replies short and conversational. Politely decline anything unrelated t
 
     logger.debug({ chatId, userId }, 'processManagerMessage: reply sent');
   } catch (err) {
+    clearTimeout(thinkingTimer);
     logger.error({ err, chatId, userId }, 'processManagerMessage: error');
     try {
       await telegram.sendMessage(
@@ -322,7 +408,16 @@ export async function handleManagerBotMessage(
     return;
   }
 
+  const text = message.text ?? '';
+  if (!text) {
+    logger.info({ chatId: message.chat.id, userId: from.id }, 'handleManagerBotMessage: empty text, ignoring');
+    return;
+  }
+
   const conversationId = `manager:${from.id}`;
+
+  // Handle /start and /help commands — includes throttle; no lock needed
+  if (await handleCommands(text, from, message.chat.id, telegram, managerBotToken)) return;
 
   // Per-conversation throttle — fail-open: Redis errors allow the message through
   if (env.MANAGER_THROTTLE_MS > 0) {
@@ -332,11 +427,15 @@ export async function handleManagerBotMessage(
       logger.debug({ userId: from.id, throttle }, 'handleManagerBotMessage: throttle check');
       if (!throttle.allowed) {
         const seconds = Math.ceil(throttle.retryAfterMs / 1000);
-        await telegram.sendMessage(
-          managerBotToken,
-          message.chat.id,
-          `Please wait ${seconds} second${seconds !== 1 ? 's' : ''} before sending another message.`,
-        );
+        try {
+          await telegram.sendMessage(
+            managerBotToken,
+            message.chat.id,
+            `Please wait ${seconds} second${seconds !== 1 ? 's' : ''} before sending another message.`,
+          );
+        } catch (err) {
+          logger.warn({ err, chatId: message.chat.id }, 'handleManagerBotMessage: failed to send throttle reply');
+        }
         return;
       }
     } catch (err) {

@@ -308,6 +308,31 @@ describe('handleManagerBotMessage', () => {
     expect(text).to.include('safe manager reply');
   });
 
+  it('/start command → sends welcome reply, chatStream is NOT called', async () => {
+    const message = makeMessage({ text: '/start' });
+    await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+    expect(agentServiceStub.chatStream.called).to.be.false;
+    expect(mockTelegram.sendMessage.calledOnce).to.be.true;
+    const reply: string = mockTelegram.sendMessage.firstCall.args[2];
+    expect(reply).to.include('Welcome');
+  });
+
+  it('/help command → sends help reply, chatStream is NOT called', async () => {
+    const message = makeMessage({ text: '/help' });
+    await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+    expect(agentServiceStub.chatStream.called).to.be.false;
+    expect(mockTelegram.sendMessage.calledOnce).to.be.true;
+    const reply: string = mockTelegram.sendMessage.firstCall.args[2];
+    expect(reply).to.include('/help');
+  });
+
+  it('empty text → chatStream is NOT called, no sendMessage', async () => {
+    const message = makeMessage({ text: '' });
+    await handleManagerBotMessage(message, mockTelegram, agentServiceStub, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+    expect(agentServiceStub.chatStream.called).to.be.false;
+    expect(mockTelegram.sendMessage.called).to.be.false;
+  });
+
   describe('conversation throttle', () => {
     it('replies with wait seconds and skips chatStream when throttled', async () => {
       const throttledStub = sinon.stub().resolves({ allowed: false, retryAfterMs: 3500 });
@@ -482,12 +507,12 @@ describe('enqueueManagerMessage', () => {
   const MANAGER_TOKEN = 'manager-token-abc';
   const BOT_USERNAME = 'hellominds_bot';
 
-  const makeMessage = (overrides: Partial<{ chatId: number; fromId: number; messageId: number }> = {}) => ({
+  const makeMessage = (overrides: Partial<{ chatId: number; fromId: number; messageId: number; text: string; firstName: string }> = {}) => ({
     message_id: overrides.messageId ?? 1,
     chat: { id: overrides.chatId ?? 100, type: 'private' as const },
     date: 1,
-    from: { id: overrides.fromId ?? 42, is_bot: false, first_name: 'Alice', username: 'alice' },
-    text: 'hello',
+    from: { id: overrides.fromId ?? 42, is_bot: false, first_name: overrides.firstName ?? 'Alice', username: 'alice' },
+    text: overrides.text ?? 'hello',
   });
 
   beforeEach(async () => {
@@ -547,6 +572,86 @@ describe('enqueueManagerMessage', () => {
     expect(queueAddStub.called).to.be.false;
     expect(mockTelegram.sendMessage.called).to.be.false;
   });
+
+  it('/start → sends welcome reply, skips throttle, lock, and queue', async () => {
+    const message = makeMessage({ text: '/start' });
+    await enqueueManagerMessage(message, mockTelegram, MANAGER_TOKEN, BOT_USERNAME);
+    expect(mockTelegram.sendMessage.calledOnce).to.be.true;
+    const reply: string = mockTelegram.sendMessage.firstCall.args[2];
+    expect(reply).to.include('Welcome');
+    // command throttle uses manager-cmd: key — normal throttle/lock/queue are NOT invoked
+    expect(checkThrottleStub.firstCall.args[0]).to.equal('manager-cmd:42');
+    expect(acquireLockStub.called).to.be.false;
+    expect(queueAddStub.called).to.be.false;
+  });
+
+  it('/start@managerbot → sends welcome reply (bot-suffix variant)', async () => {
+    const message = makeMessage({ text: '/start@managerbot' });
+    await enqueueManagerMessage(message, mockTelegram, MANAGER_TOKEN, BOT_USERNAME);
+    expect(mockTelegram.sendMessage.calledOnce).to.be.true;
+    const reply: string = mockTelegram.sendMessage.firstCall.args[2];
+    expect(reply).to.include('Welcome');
+    expect(queueAddStub.called).to.be.false;
+  });
+
+  it('/start with XSS first_name → reply contains sanitized name, not raw HTML', async () => {
+    const message = makeMessage({ text: '/start', firstName: '<script>Bob</script>' });
+    await enqueueManagerMessage(message, mockTelegram, MANAGER_TOKEN, BOT_USERNAME);
+    const reply: string = mockTelegram.sendMessage.firstCall.args[2];
+    expect(reply).to.include('Bob');
+    expect(reply).not.to.include('<script>');
+  });
+
+  it('/start with empty first_name → reply contains "there" (fallback)', async () => {
+    const message = makeMessage({ text: '/start', firstName: '' });
+    await enqueueManagerMessage(message, mockTelegram, MANAGER_TOKEN, BOT_USERNAME);
+    const reply: string = mockTelegram.sendMessage.firstCall.args[2];
+    expect(reply).to.include('there');
+  });
+
+  it('/help → sends help reply, skips throttle, lock, and queue', async () => {
+    const message = makeMessage({ text: '/help' });
+    await enqueueManagerMessage(message, mockTelegram, MANAGER_TOKEN, BOT_USERNAME);
+    expect(mockTelegram.sendMessage.calledOnce).to.be.true;
+    const reply: string = mockTelegram.sendMessage.firstCall.args[2];
+    expect(reply).to.include('/help');
+    // command throttle uses manager-cmd: key — normal lock/queue are NOT invoked
+    expect(checkThrottleStub.firstCall.args[0]).to.equal('manager-cmd:42');
+    expect(acquireLockStub.called).to.be.false;
+    expect(queueAddStub.called).to.be.false;
+  });
+
+  it('empty text → no sendMessage, no lock, no queue', async () => {
+    const message = makeMessage({ text: '' });
+    await enqueueManagerMessage(message, mockTelegram, MANAGER_TOKEN, BOT_USERNAME);
+    expect(mockTelegram.sendMessage.called).to.be.false;
+    expect(acquireLockStub.called).to.be.false;
+    expect(queueAddStub.called).to.be.false;
+  });
+
+  it('/start when throttled → sends wait reply, skips lock and queue; sendMessage called once', async () => {
+    // Use a fresh esmock so checkThrottle returns throttled for the command throttle key
+    await esmock.purge();
+    const throttledCheckThrottle = sinon.stub().resolves({ allowed: false, retryAfterMs: 3000 });
+    const throttledQueueAdd = sinon.stub().resolves({ id: 'no-job' });
+    const throttledAcquireLock = sinon.stub().resolves(true);
+    const throttledReleaseLock = sinon.stub().resolves();
+    const throttledModule = await esmock('../../src/services/manager-bot.ts', {
+      '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: sinon.stub().resolves(null) },
+      '../../src/services/conversation-throttle.js': { checkThrottle: throttledCheckThrottle },
+      '../../src/services/conversation-lock.js': { acquireLock: throttledAcquireLock, releaseLock: throttledReleaseLock },
+      '../../src/queues/manager-queue.js': { managerQueue: { add: throttledQueueAdd } },
+    });
+    const message = makeMessage({ text: '/start' });
+    await throttledModule.enqueueManagerMessage(message, mockTelegram, MANAGER_TOKEN, BOT_USERNAME);
+    // Throttle reply is sent (not the welcome message)
+    expect(mockTelegram.sendMessage.calledOnce).to.be.true;
+    const reply: string = mockTelegram.sendMessage.firstCall.args[2];
+    expect(reply.toLowerCase()).to.satisfy((r: string) => r.includes('wait') || r.includes('second'));
+    // Lock and queue must NOT be invoked when throttled
+    expect(throttledAcquireLock.called).to.be.false;
+    expect(throttledQueueAdd.called).to.be.false;
+  });
 });
 
 describe('processManagerMessage', () => {
@@ -585,6 +690,11 @@ describe('processManagerMessage', () => {
 
     const module = await esmock('../../src/services/manager-bot.ts', {
       '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerStub },
+      '../../src/db/queries/conversations.js': { getToolsetState: sinon.stub().resolves({}) },
+      '../../src/services/tool-tier.js': {
+        resolveToolTier: sinon.stub().returns('base'),
+        getToolsForTier: sinon.stub().returns([]),
+      },
       '../../src/services/conversation-throttle.js': { checkThrottle: sinon.stub().resolves({ allowed: true, retryAfterMs: 0 }) },
       '../../src/services/conversation-lock.js': { acquireLock: sinon.stub().resolves(true), releaseLock: sinon.stub().resolves() },
       '../../src/queues/manager-queue.js': { managerQueue: { add: sinon.stub().resolves({ id: 'j1' }) } },
@@ -858,5 +968,50 @@ describe('processManagerMessage', () => {
 
     const systemPrompt: string = authChatStream.firstCall.args[3];
     expect(systemPrompt).to.include('[email_verified]');
+  });
+});
+
+describe('parseCommand', () => {
+  let parseCommand: (text: string) => string | null;
+
+  before(async () => {
+    const module = await import('../../src/services/manager-bot.js');
+    parseCommand = module.parseCommand;
+  });
+
+  it("'/start' → 'start'", () => {
+    expect(parseCommand('/start')).to.equal('start');
+  });
+
+  it("'/start@hellominds_bot' → 'start' (bot-suffix stripped)", () => {
+    expect(parseCommand('/start@hellominds_bot')).to.equal('start');
+  });
+
+  it("'/HELP' → 'help' (case-folded)", () => {
+    expect(parseCommand('/HELP')).to.equal('help');
+  });
+
+  it("'/help extra words' → 'help' (trailing text OK)", () => {
+    expect(parseCommand('/help extra words')).to.equal('help');
+  });
+
+  it("'hello' → null (no slash)", () => {
+    expect(parseCommand('hello')).to.be.null;
+  });
+
+  it("'' → null (empty string)", () => {
+    expect(parseCommand('')).to.be.null;
+  });
+
+  it("'/' → null (slash alone, no command name)", () => {
+    expect(parseCommand('/')).to.be.null;
+  });
+
+  it("'/newbot' → 'newbot' (not 'new')", () => {
+    expect(parseCommand('/newbot')).to.equal('newbot');
+  });
+
+  it("'/helper' → 'helper' (not 'help')", () => {
+    expect(parseCommand('/helper')).to.equal('helper');
   });
 });
