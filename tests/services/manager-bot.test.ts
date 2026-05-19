@@ -113,6 +113,8 @@ describe('handleManagerBotMessage', () => {
     const systemPrompt: string = agentServiceStub.chatStream.firstCall.args[3];
     expect(systemPrompt).to.include('general assistant for HelloMinds');
     expect(systemPrompt).to.include('verify_email');
+    expect(systemPrompt).to.include('RULE:');
+    expect(systemPrompt).to.include('exact response');
   });
 
   it('routes to onboarding prompt when bot status is PENDING', async () => {
