@@ -7,8 +7,13 @@ export function createVerifyEmailTool(botId: string, userId: string) {
   return tool(
     async ({ email }) => {
       logger.debug({ botId, userId }, 'verify_email tool: invoked');
-      await sendVerificationEmail(email, botId, userId);
-      return `Verification email sent to ${email}. Please click the link in the email to verify your identity.`;
+      try {
+        await sendVerificationEmail(email, botId, userId);
+        return `Verification email sent to ${email}. Ask the user to check their inbox and click the verification link.`;
+      } catch (err) {
+        logger.error({ err, botId, userId }, 'verify_email tool: sendVerificationEmail failed');
+        return 'ERROR: Failed to send verification email. Please try again later. Do not tell the user the email was sent.';
+      }
     },
     {
       name: 'verify_email',

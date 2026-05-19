@@ -47,7 +47,7 @@ export async function processEmailVerificationJob(
   await deps.telegram.sendMessage(
     botToken,
     chatId,
-    `✅ Email *${escapedEmail}* verified\\. You now have access to additional tools\\.`,
+    `✅ Email *${escapedEmail}* verified\\! Reply here and I'll help you create your Mind — it only takes 60 seconds\\.`,
     { parse_mode: 'MarkdownV2' },
   );
   const marked = await markNotified(jti);

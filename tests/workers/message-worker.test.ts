@@ -105,6 +105,7 @@ describe('processEmailVerificationJob', () => {
     expect(chatId).to.equal(job.data.chatId);
     // Dots in email should be escaped as \. in MarkdownV2
     expect(text).to.include('user\\.name@example\\.com');
+    expect(text).to.include('Reply here');
 
     expect(markNotifiedStub.calledOnceWith(job.data.jti)).to.be.true;
   });

@@ -175,6 +175,7 @@ describe('handleManagerBotMessage', () => {
     expect(authAgent.chatStream.calledOnce).to.be.true;
     const systemPrompt: string = authAgent.chatStream.firstCall.args[3];
     expect(systemPrompt).to.include('verified');
+    expect(systemPrompt).to.include('proactively acknowledge');
     expect(systemPrompt).to.include('@alicebot');
     expect(systemPrompt).not.to.include('get started');
   });
