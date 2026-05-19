@@ -5,4 +5,5 @@
 export interface ConversationMessage {
   role: string;
   content: string;
+  additional_kwargs?: Record<string, unknown>;
 }

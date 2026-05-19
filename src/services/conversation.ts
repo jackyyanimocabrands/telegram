@@ -74,7 +74,12 @@ export function toBaseMessages(messages: ConversationMessage[]): BaseMessage[] {
   return messages.map((m) => {
     switch (m.role) {
       case 'user':      return new HumanMessage(m.content);
-      case 'assistant': return new AIMessage(m.content);
+      case 'assistant': return new AIMessage({
+        content: m.content,
+        ...(m.additional_kwargs && Object.keys(m.additional_kwargs).length > 0
+          ? { additional_kwargs: m.additional_kwargs }
+          : {}),
+      });
       case 'system':    return new SystemMessage(m.content);
       default:          return new HumanMessage(m.content); // safe fallback
     }
@@ -95,9 +100,21 @@ export function fromBaseMessages(messages: BaseMessage[]): ConversationMessage[]
       else if (type === 'ai') role = 'assistant';
       else if (type === 'system') role = 'system';
       else role = 'user'; // fallback for tool/function messages
-      return {
+
+      const base = {
         role,
         content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
       };
+
+      if (role === 'assistant') {
+        const filteredKwargs = Object.fromEntries(
+          Object.entries(m.additional_kwargs ?? {}).filter(([k]) => k !== 'tool_calls'),
+        );
+        if (Object.keys(filteredKwargs).length > 0) {
+          return { ...base, additional_kwargs: filteredKwargs };
+        }
+      }
+
+      return base;
     });
 }

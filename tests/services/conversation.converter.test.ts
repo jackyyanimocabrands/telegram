@@ -73,7 +73,9 @@ describe('fromBaseMessages', () => {
 
   it('converts AIMessage → { role: "assistant", content: "..." }', () => {
     const result = fromBaseMessages([new AIMessage('reply')]);
-    expect(result).to.deep.equal([{ role: 'assistant', content: 'reply' }]);
+    expect(result).to.have.length(1);
+    expect(result[0].role).to.equal('assistant');
+    expect(result[0].content).to.equal('reply');
   });
 
   it('converts SystemMessage → { role: "system", content: "..." }', () => {
@@ -117,7 +119,8 @@ describe('fromBaseMessages', () => {
     ];
     const converted = toBaseMessages(original);
     const roundTripped = fromBaseMessages(converted);
-    expect(roundTripped).to.deep.equal(original);
+    // Only compare role and content (no additional_kwargs expected for plain messages)
+    expect(roundTripped.map(({ role, content }) => ({ role, content }))).to.deep.equal(original);
   });
 
   it('round-trip preserves unicode content', () => {
@@ -147,5 +150,83 @@ describe('fromBaseMessages', () => {
     const assistantMsg = result.find(m => m.role === 'assistant' && m.content === 'assistant answer');
     expect(userMsg).to.exist;
     expect(assistantMsg).to.exist;
+  });
+
+  // ── additional_kwargs handling ─────────────────────────────────────────────
+
+  it('fromBaseMessages — AIMessage with reasoning_content persists it in additional_kwargs', () => {
+    const msg = new AIMessage({ content: 'answer', additional_kwargs: { reasoning_content: 'my reasoning' } });
+    const result = fromBaseMessages([msg]);
+    expect(result).to.have.length(1);
+    expect(result[0].additional_kwargs).to.deep.equal({ reasoning_content: 'my reasoning' });
+  });
+
+  it('fromBaseMessages — AIMessage with tool_calls strips tool_calls but keeps other kwargs', () => {
+    const msg = new AIMessage({
+      content: 'answer',
+      additional_kwargs: { reasoning_content: 'think', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'fn', arguments: '{}' } }] },
+    });
+    const result = fromBaseMessages([msg]);
+    expect(result).to.have.length(1);
+    expect(result[0].additional_kwargs).to.deep.equal({ reasoning_content: 'think' });
+    expect(result[0].additional_kwargs).to.not.have.property('tool_calls');
+  });
+
+  it('fromBaseMessages — AIMessage with only tool_calls produces no additional_kwargs field', () => {
+    const msg = new AIMessage({
+      content: 'answer',
+      additional_kwargs: { tool_calls: [{ id: 'c1', type: 'function', function: { name: 'fn', arguments: '{}' } }] },
+    });
+    const result = fromBaseMessages([msg]);
+    expect(result).to.have.length(1);
+    expect(result[0]).to.not.have.property('additional_kwargs');
+  });
+
+  it('fromBaseMessages — AIMessage with empty additional_kwargs produces no additional_kwargs field', () => {
+    const msg = new AIMessage({ content: 'answer', additional_kwargs: {} });
+    const result = fromBaseMessages([msg]);
+    expect(result).to.have.length(1);
+    expect(result[0]).to.not.have.property('additional_kwargs');
+  });
+
+  it('fromBaseMessages — HumanMessage with additional_kwargs produces no additional_kwargs on output', () => {
+    const msg = new HumanMessage({ content: 'hello', additional_kwargs: { foo: 'bar' } });
+    const result = fromBaseMessages([msg]);
+    expect(result).to.have.length(1);
+    expect(result[0]).to.not.have.property('additional_kwargs');
+  });
+
+  it('toBaseMessages — ConversationMessage with additional_kwargs → AIMessage has correct additional_kwargs', () => {
+    const result = toBaseMessages([{ role: 'assistant', content: 'hi', additional_kwargs: { reasoning_content: 'think' } }]);
+    expect(result).to.have.length(1);
+    expect(result[0]).to.be.instanceOf(AIMessage);
+    expect((result[0] as AIMessage).additional_kwargs).to.deep.equal({ reasoning_content: 'think' });
+  });
+
+  it('toBaseMessages — ConversationMessage without additional_kwargs → AIMessage has empty additional_kwargs', () => {
+    const result = toBaseMessages([{ role: 'assistant', content: 'hi' }]);
+    expect(result).to.have.length(1);
+    expect(result[0]).to.be.instanceOf(AIMessage);
+    // LangChain default is {} when not provided
+    expect((result[0] as AIMessage).additional_kwargs).to.deep.equal({});
+  });
+
+  it('round-trip: reasoning_content survives fromBaseMessages → toBaseMessages', () => {
+    const original = new AIMessage({ content: 'answer', additional_kwargs: { reasoning_content: 'deep thought' } });
+    const serialized = fromBaseMessages([original]);
+    const restored = toBaseMessages(serialized);
+    expect(restored).to.have.length(1);
+    expect((restored[0] as AIMessage).additional_kwargs).to.deep.equal({ reasoning_content: 'deep thought' });
+  });
+
+  it('round-trip: tool_calls does NOT survive (stripped in fromBaseMessages)', () => {
+    const original = new AIMessage({
+      content: 'answer',
+      additional_kwargs: { tool_calls: [{ id: 'c1', type: 'function', function: { name: 'fn', arguments: '{}' } }] },
+    });
+    const serialized = fromBaseMessages([original]);
+    const restored = toBaseMessages(serialized);
+    expect(restored).to.have.length(1);
+    expect((restored[0] as AIMessage).additional_kwargs).to.deep.equal({});
   });
 });
