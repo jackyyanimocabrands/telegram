@@ -17,6 +17,7 @@ import { BotRegistry } from '../services/bot-registry.js';
 import { HttpTelegramClient } from '../services/telegram-api.js';
 import * as managedBotQueries from '../db/queries/managed-bots.js';
 import { enqueueManagerMessage } from '../services/manager-bot.js';
+import { processManagedBotUpdated } from '../services/managed-bot.js';
 import { managerQueue } from '../queues/manager-queue.js';
 import { getEmailVerificationQueue } from '../queues/email-verification-queue.js';
 import { createVerifyEmailRouter } from '../routes/verify-email.js';
@@ -99,6 +100,13 @@ export class AppBootstrap {
               telegram,
               env.BOT_TOKEN,
               env.BOT_USERNAME,
+            );
+          } else if (update.managed_bot) {
+            await processManagedBotUpdated(
+              update.managed_bot,
+              telegram,
+              env.BOT_TOKEN,
+              'manager',
             );
           } else {
             logger.debug({ updateId: update.update_id }, 'Manager bot: unhandled update type, ignoring');

@@ -114,7 +114,7 @@ export async function processManagerMessage(
   managerBotToken: string,
   managerBotId: string,
   _baseUrl: string,
-  _botUsername: string,
+  botUsername: string,
 ): Promise<void> {
   const { chatId, userId, text, firstName, conversationId, languageCode } = jobData;
 
@@ -201,17 +201,15 @@ Usernames must end in _bot, be 5–32 characters, alphanumeric and underscores o
 Wait for the user to choose or propose a name. Verify any user-proposed name with check_bot_username before accepting it.
 
 STEP 3 — Create the Mind
-Once a name is confirmed:
-1. Tell the user to open @BotFather on Telegram and type /newbot
-2. When BotFather asks for a name, use the confirmed display name
-3. When BotFather asks for a username, enter the confirmed username exactly
-4. Ask the user to copy the bot token BotFather provides and share it here
-
-Once the user provides the token, call create_bot with the confirmed name, username, and token.
+Once a name is confirmed, send the user this deep link:
+https://t.me/newbot/{managerBotUsername}/<confirmed_username>?name=<confirmed_display_name>
+Replace <confirmed_username> with the agreed bot username and <confirmed_display_name> with the agreed display name (URL-encode spaces as %20).
+Tell the user to tap it and confirm — one tap is all it takes. Their Mind will be created automatically.
+Do not ask for a token. Do not mention BotFather.
 
 Keep all replies short and conversational. Politely decline anything unrelated to HelloMinds or general assistance.`;
 
-      systemPrompt = interpolate(template, { name: safeName, botContext, botUsername: managedBot?.bot_username ?? '' });
+      systemPrompt = interpolate(template, { name: safeName, botContext, botUsername: managedBot?.bot_username ?? '', managerBotUsername: botUsername });
     } else {
       const template =
         (env.MANAGER_ONBOARDING_PROMPT && env.MANAGER_ONBOARDING_PROMPT.trim()) ||

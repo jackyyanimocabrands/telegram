@@ -707,4 +707,35 @@ describe('processManagerMessage', () => {
     // toolsetState is passed verbatim as arg[5] to chatStream (projection happens inside agentNode)
     expect(freshChatStream.firstCall.args[5]).to.deep.equal(toolsetData);
   });
+
+  it('{managerBotUsername} placeholder is replaced with actual bot username in authenticated system prompt', async () => {
+    async function* authStream() { yield 'AI reply'; }
+    const authChatStream = sinon.stub().returns(authStream());
+    const authAgent = { chatStream: authChatStream };
+
+    const mod = await esmock('../../src/services/manager-bot.ts', {
+      '../../src/db/queries/managed-bots.js': {
+        findManagedBotByOwner: sinon.stub().resolves({ status: 'ACTIVE', bot_username: 'alicebot' }),
+      },
+      '../../src/db/queries/conversations.js': {
+        getToolsetState: sinon.stub().resolves({ email: 'alice@example.com', email_verified: true }),
+      },
+      '../../src/services/tool-tier.js': {
+        resolveToolTier: sinon.stub().returns('authenticated'),
+        getToolsForTier: sinon.stub().returns([]),
+      },
+      '../../src/services/conversation-throttle.js': { checkThrottle: sinon.stub().resolves({ allowed: true, retryAfterMs: 0 }) },
+      '../../src/services/conversation-lock.js': { acquireLock: sinon.stub().resolves(true), releaseLock: sinon.stub().resolves() },
+      '../../src/queues/manager-queue.js': { managerQueue: { add: sinon.stub().resolves({ id: 'j1' }) } },
+    });
+
+    const jobData = makeJobData();
+    await mod.processManagerMessage(jobData, mockTelegram, authAgent, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+
+    const systemPrompt: string = authChatStream.firstCall.args[3];
+    // The literal placeholder must NOT appear — it must have been interpolated
+    expect(systemPrompt).not.to.include('{managerBotUsername}');
+    // The actual bot username (BOT_USERNAME = 'hellominds_bot') must appear instead
+    expect(systemPrompt).to.include(BOT_USERNAME);
+  });
 });

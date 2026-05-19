@@ -74,6 +74,7 @@ export interface TelegramClient {
     text?: string,
   ): Promise<boolean>;
   replaceManagedBotToken(managerToken: string, botUserId: number): Promise<string>;
+  getManagedBotToken(managerToken: string, botUserId: number): Promise<string>;
 }
 
 const BASE_URL = 'https://api.telegram.org';
@@ -267,5 +268,10 @@ export class HttpTelegramClient implements TelegramClient {
   async replaceManagedBotToken(managerToken: string, botUserId: number): Promise<string> {
     logger.debug({ botUserId }, 'replaceManagedBotToken: called');
     return this.call<string>(managerToken, 'replaceManagedBotToken', { user_id: botUserId });
+  }
+
+  async getManagedBotToken(managerToken: string, botUserId: number): Promise<string> {
+    logger.debug({ botUserId }, 'getManagedBotToken: called');
+    return this.call<string>(managerToken, 'getManagedBotToken', { user_id: botUserId });
   }
 }

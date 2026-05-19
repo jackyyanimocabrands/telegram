@@ -28,6 +28,7 @@ export class MockTelegramClient implements TelegramClient {
   setMyCommands = sinon.stub().resolves(true);
   answerCallbackQuery = sinon.stub().resolves(true);
   replaceManagedBotToken = sinon.stub();
+  getManagedBotToken = sinon.stub();
 
   reset(): void {
     sinon.resetHistory();
@@ -79,5 +80,9 @@ export class MockTelegramClient implements TelegramClient {
 
   whenReplaceManagedBotToken(result: string): void {
     this.replaceManagedBotToken.resolves(result);
+  }
+
+  whenGetManagedBotToken(result: string): void {
+    this.getManagedBotToken.resolves(result);
   }
 }
