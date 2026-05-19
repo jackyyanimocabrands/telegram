@@ -10,7 +10,7 @@ async function main(): Promise<void> {
   }
 
   try {
-    const result = await telegram.setMyCommands(env.BOT_TOKEN, MANAGER_BOT_COMMANDS);
+    const result = await telegram.setMyCommands(env.BOT_TOKEN, MANAGER_BOT_COMMANDS, { type: 'all_private_chats' });
     console.log('Commands set:', result);
   } catch (err) {
     console.error('Failed to set commands:', err);

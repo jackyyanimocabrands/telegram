@@ -67,7 +67,7 @@ export interface TelegramClient {
   setMyName(token: string, name: string, description?: string): Promise<boolean>;
   setMyDescription(token: string, description: string): Promise<boolean>;
   setMyShortDescription(token: string, description: string): Promise<boolean>;
-  setMyCommands(token: string, commands: BotCommand[]): Promise<boolean>;
+  setMyCommands(token: string, commands: BotCommand[], scope?: Record<string, unknown>): Promise<boolean>;
   answerCallbackQuery(
     token: string,
     callbackQueryId: string,
@@ -248,9 +248,11 @@ export class HttpTelegramClient implements TelegramClient {
     return this.call<boolean>(token, 'setMyShortDescription', { description });
   }
 
-  async setMyCommands(token: string, commands: BotCommand[]): Promise<boolean> {
-    logger.debug({ commandCount: commands.length }, 'setMyCommands: called');
-    return this.call<boolean>(token, 'setMyCommands', { commands });
+  async setMyCommands(token: string, commands: BotCommand[], scope?: Record<string, unknown>): Promise<boolean> {
+    logger.debug({ commandCount: commands.length, scope }, 'setMyCommands: called');
+    const body: Record<string, unknown> = { commands };
+    if (scope) body['scope'] = scope;
+    return this.call<boolean>(token, 'setMyCommands', body);
   }
 
   async answerCallbackQuery(
