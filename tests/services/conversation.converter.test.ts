@@ -59,6 +59,18 @@ describe('toBaseMessages', () => {
     // T11: verify the fallback TYPE is HumanMessage, not just the content
     expect(result[0]).to.be.instanceOf(HumanMessage);
   });
+
+  // QA-T3: tool_result round-trip — ConversationMessage with role:'tool_result' → ToolMessage
+  it('QA-T3: role "tool_result" with tool_call_id in additional_kwargs → ToolMessage with correct tool_call_id', () => {
+    const result = toBaseMessages([
+      { role: 'tool_result', content: 'verified', additional_kwargs: { tool_call_id: 'call-abc' } },
+    ] as any);
+
+    expect(result).to.have.length(1);
+    expect(result[0].getType()).to.equal('tool');
+    expect((result[0] as ToolMessage).tool_call_id).to.equal('call-abc');
+    expect(result[0].content).to.equal('verified');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -131,11 +143,12 @@ describe('fromBaseMessages', () => {
 
   // T9: ToolMessage filter tests
   it('filters out ToolMessage — returns empty array for single ToolMessage input', () => {
-    // ToolMessage.getType() === 'tool' which is explicitly filtered by fromBaseMessages
+    // ToolMessage.getType() === 'tool' — now produces a tool_result record
     const result = fromBaseMessages([
       new ToolMessage({ content: 'result', tool_call_id: 'call1' }),
     ]);
-    expect(result).to.have.length(0);
+    expect(result).to.have.length(1);
+    expect(result[0].role).to.equal('tool_result');
   });
 
   it('mixed array [HumanMessage, ToolMessage, AIMessage] — documents ToolMessage handling', () => {
@@ -155,21 +168,26 @@ describe('fromBaseMessages', () => {
   // ── additional_kwargs handling ─────────────────────────────────────────────
 
   it('fromBaseMessages — AIMessage with reasoning_content persists it in additional_kwargs', () => {
+    // P9 allowlist: only id, model, finish_reason are persisted — reasoning_content is stripped
     const msg = new AIMessage({ content: 'answer', additional_kwargs: { reasoning_content: 'my reasoning' } });
     const result = fromBaseMessages([msg]);
     expect(result).to.have.length(1);
-    expect(result[0].additional_kwargs).to.deep.equal({ reasoning_content: 'my reasoning' });
+    // reasoning_content is NOT in the allowlist → no additional_kwargs on output
+    expect(result[0]).to.not.have.property('additional_kwargs');
   });
 
   it('fromBaseMessages — AIMessage with tool_calls strips tool_calls but keeps other kwargs', () => {
+    // Use proper tool_calls field to trigger the tool_call branch
     const msg = new AIMessage({
       content: 'answer',
-      additional_kwargs: { reasoning_content: 'think', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'fn', arguments: '{}' } }] },
+      tool_calls: [{ name: 'fn', args: {}, id: 'c1', type: 'tool_call' }],
     });
     const result = fromBaseMessages([msg]);
-    expect(result).to.have.length(1);
-    expect(result[0].additional_kwargs).to.deep.equal({ reasoning_content: 'think' });
-    expect(result[0].additional_kwargs).to.not.have.property('tool_calls');
+    // AIMessage with tool_calls produces a tool_call record; text content is stored in text_content kwarg
+    const toolCallRecord = result.find(r => r.role === 'tool_call');
+    expect(toolCallRecord).to.exist;
+    // text content 'answer' is stored in additional_kwargs.text_content of the tool_call record (not a separate assistant record)
+    expect(toolCallRecord!.additional_kwargs?.text_content).to.equal('answer');
   });
 
   it('fromBaseMessages — AIMessage with only tool_calls produces no additional_kwargs field', () => {
@@ -178,8 +196,9 @@ describe('fromBaseMessages', () => {
       additional_kwargs: { tool_calls: [{ id: 'c1', type: 'function', function: { name: 'fn', arguments: '{}' } }] },
     });
     const result = fromBaseMessages([msg]);
-    expect(result).to.have.length(1);
-    expect(result[0]).to.not.have.property('additional_kwargs');
+    // AIMessage with tool_calls produces a tool_call record; content 'answer' also produces an assistant record
+    const toolCallRecord = result.find(r => r.role === 'tool_call');
+    expect(toolCallRecord).to.exist;
   });
 
   it('fromBaseMessages — AIMessage with empty additional_kwargs produces no additional_kwargs field', () => {
@@ -212,21 +231,57 @@ describe('fromBaseMessages', () => {
   });
 
   it('round-trip: reasoning_content survives fromBaseMessages → toBaseMessages', () => {
+    // P9 allowlist: reasoning_content is stripped during fromBaseMessages → not restored on toBaseMessages
     const original = new AIMessage({ content: 'answer', additional_kwargs: { reasoning_content: 'deep thought' } });
     const serialized = fromBaseMessages([original]);
     const restored = toBaseMessages(serialized);
     expect(restored).to.have.length(1);
-    expect((restored[0] as AIMessage).additional_kwargs).to.deep.equal({ reasoning_content: 'deep thought' });
+    // reasoning_content is stripped by P9 allowlist, so it does not survive round-trip
+    expect((restored[0] as AIMessage).additional_kwargs).to.deep.equal({});
   });
 
-  it('round-trip: tool_calls does NOT survive (stripped in fromBaseMessages)', () => {
+  it('round-trip: tool_calls ARE preserved (tool_call record survives fromBaseMessages → toBaseMessages → fromBaseMessages)', () => {
     const original = new AIMessage({
-      content: 'answer',
-      additional_kwargs: { tool_calls: [{ id: 'c1', type: 'function', function: { name: 'fn', arguments: '{}' } }] },
+      content: 'thinking aloud',
+      tool_calls: [{ name: 'fn', args: {}, id: 'c1', type: 'tool_call' }],
     });
     const serialized = fromBaseMessages([original]);
     const restored = toBaseMessages(serialized);
-    expect(restored).to.have.length(1);
-    expect((restored[0] as AIMessage).additional_kwargs).to.deep.equal({});
+    const roundTripped = fromBaseMessages(restored);
+    // After round-trip, the tool_call record should still exist
+    const toolCallRecord = roundTripped.find(r => r.role === 'tool_call');
+    expect(toolCallRecord).to.exist;
+    // The restored AIMessage content should equal the original text content
+    const restoredAi = restored.find(m => m instanceof AIMessage) as AIMessage | undefined;
+    expect(restoredAi).to.exist;
+    expect(restoredAi!.content).to.equal('thinking aloud');
+  });
+
+  // QA-T4: AIMessage with empty tool_calls array → plain assistant record (no tool_call branch)
+  it('QA-T4: AIMessage with empty tool_calls array → single assistant record (tool_call branch not triggered)', () => {
+    const msg = new AIMessage({ content: 'plain reply', tool_calls: [] });
+    const result = fromBaseMessages([msg]);
+
+    expect(result).to.have.length(1);
+    expect(result[0].role).to.equal('assistant');
+    const toolCallRecord = result.find(r => r.role === 'tool_call');
+    expect(toolCallRecord).to.not.exist;
+  });
+
+  // T7: toBaseMessages with invalid JSON tool_call content does not throw
+  it('T7: toBaseMessages with invalid JSON tool_call content does not throw and returns AIMessage with empty tool_calls', () => {
+    const result = toBaseMessages([{ role: 'tool_call', content: 'NOT JSON {{{' } as any]);
+    expect(result).to.have.length(1);
+    expect(result[0]).to.be.instanceOf(AIMessage);
+    expect((result[0] as AIMessage).tool_calls).to.deep.equal([]);
+  });
+
+  // T8: fromBaseMessages with unsafe tool_call_id → replaced with empty string
+  it('T8: fromBaseMessages with unsafe tool_call_id uses empty string due to validation failure', () => {
+    const msg = new ToolMessage({ content: 'result', tool_call_id: 'id with spaces & special!' });
+    const result = fromBaseMessages([msg]);
+    expect(result).to.have.length(1);
+    expect(result[0].role).to.equal('tool_result');
+    expect(result[0].additional_kwargs?.tool_call_id).to.equal('');
   });
 });

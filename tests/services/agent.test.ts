@@ -183,8 +183,9 @@ describe('AgentService (LangGraph)', () => {
       await svc.chat('bot-1', 42, 'new msg');
 
       const [messages] = stubModel.invoke.firstCall.args as [{ getType(): string; content: string }[]];
-      const aiMessages = messages.filter(m => m.getType() === 'ai');
-      const sentinelMsg = aiMessages.find(m => m.content.includes('User likes TypeScript'));
+      // Summary is now embedded in a SystemMessage, not a separate AIMessage
+      const systemMessages = messages.filter(m => m.getType() === 'system');
+      const sentinelMsg = systemMessages.find(m => m.content.includes('User likes TypeScript'));
       expect(sentinelMsg).to.exist;
     });
 
@@ -528,7 +529,7 @@ describe('AgentService (LangGraph)', () => {
       expect(nonSystemNonClosing).to.have.length(6);
     });
 
-    it('calls conversationService.resetForceSummarize with correct botId and userId when forceSummarize is true', async () => {
+    it('does NOT call conversationService.resetForceSummarize from summarizeNode (moved to saveNode)', async () => {
       const { summarizeNode } = await buildAgentNodes();
 
       const { stubFactory } = makeModelFactory('summary text');
@@ -551,7 +552,7 @@ describe('AgentService (LangGraph)', () => {
       // Allow the fire-and-forget promise to resolve
       await new Promise(resolve => setImmediate(resolve));
 
-      expect(convSvc.resetForceSummarize.calledOnceWith('bot-1', 42)).to.be.true;
+      expect(convSvc.resetForceSummarize.called).to.be.false;
     });
 
     it('does NOT call conversationService.resetForceSummarize when forceSummarize is false', async () => {

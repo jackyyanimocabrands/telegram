@@ -1,4 +1,5 @@
-import { HumanMessage, AIMessage, SystemMessage, BaseMessage } from '@langchain/core/messages';
+import { HumanMessage, AIMessage, SystemMessage, ToolMessage, BaseMessage } from '@langchain/core/messages';
+import type { ToolCall } from '@langchain/core/messages/tool';
 import { llmConfig } from '../config/llm-config.js';
 import { logger } from '../utils/logger.js';
 import {
@@ -67,6 +68,9 @@ export class ConversationService {
 
 // ── LangChain message converters ───────────────────────────────────────────
 
+/** Pre-compiled regex for validating tool_call_id values (P8). Avoids recompilation on every fromBaseMessages call. */
+const TOOL_CALL_ID_RE = /^[a-zA-Z0-9_\-]+$/;
+
 /**
  * Convert ConversationMessage[] (DB format) → LangChain BaseMessage[].
  */
@@ -81,6 +85,37 @@ export function toBaseMessages(messages: ConversationMessage[]): BaseMessage[] {
           : {}),
       });
       case 'system':    return new SystemMessage(m.content);
+      case 'tool_call': {
+        // P7: validate JSON parse
+        let rawCalls: unknown;
+        try {
+          rawCalls = JSON.parse(m.content);
+        } catch {
+          logger.warn({ content: m.content }, 'toBaseMessages: tool_call content is not valid JSON, using empty tool_calls');
+          rawCalls = [];
+        }
+        // Validate it's an array; each element must have name (non-empty string) and args (plain object)
+        const toolCalls: ToolCall[] = Array.isArray(rawCalls)
+          ? (rawCalls as unknown[]).filter((tc): tc is ToolCall => {
+              if (typeof tc !== 'object' || tc === null) return false;
+              const entry = tc as Record<string, unknown>;
+              return (
+                typeof entry['name'] === 'string' && entry['name'].length > 0 && entry['name'].length <= 64 &&
+                typeof entry['args'] === 'object' && entry['args'] !== null && !Array.isArray(entry['args']) &&
+                JSON.stringify(entry['args']).length <= 8192
+              );
+            })
+          : [];
+        // P6: restore text content from additional_kwargs.text_content
+        const restoredContent = (m.additional_kwargs?.text_content as string | undefined) ?? '';
+        return new AIMessage({
+          content: restoredContent,
+          tool_calls: toolCalls,
+          id: m.additional_kwargs?.id as string | undefined,
+        });
+      }
+      case 'tool_result':
+        return new ToolMessage({ content: m.content, tool_call_id: (m.additional_kwargs?.tool_call_id as string) ?? '' });
       default:          return new HumanMessage(m.content); // safe fallback
     }
   });
@@ -88,33 +123,82 @@ export function toBaseMessages(messages: ConversationMessage[]): BaseMessage[] {
 
 /**
  * Convert LangChain BaseMessage[] → ConversationMessage[] (DB format).
- * Filters out 'remove' type messages.
+ * Handles tool_call and tool_result turns. Skips 'remove' and 'function' types.
  */
 export function fromBaseMessages(messages: BaseMessage[]): ConversationMessage[] {
-  return messages
-    .filter(m => !['remove', 'tool', 'function'].includes(m.getType()))
-    .map((m) => {
-      const type = m.getType();
-      let role: 'user' | 'assistant' | 'system';
-      if (type === 'human') role = 'user';
-      else if (type === 'ai') role = 'assistant';
-      else if (type === 'system') role = 'system';
-      else role = 'user'; // fallback for tool/function messages
+  const result: ConversationMessage[] = [];
 
-      const base = {
-        role,
-        content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-      };
+  for (const m of messages) {
+    const type = m.getType();
 
-      if (role === 'assistant') {
+    if (type === 'remove' || type === 'function') continue;
+
+    if (type === 'system') {
+      result.push({ role: 'system', content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) });
+      continue;
+    }
+
+    if (type === 'human') {
+      result.push({ role: 'user', content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) });
+      continue;
+    }
+
+    if (type === 'ai') {
+      const ai = m as AIMessage;
+      if (ai.tool_calls && ai.tool_calls.length > 0) {
+        // P5: only persist id when it is a non-empty string
+        const idKwarg = ai.id ? { id: ai.id } : undefined;
+        // P6: store text content inside the tool_call record to avoid round-trip loss
+        const textContent = typeof ai.content === 'string' ? ai.content : JSON.stringify(ai.content);
+        const textKwarg = textContent.length > 0 ? { text_content: textContent } : undefined;
+        const additional_kwargs = (idKwarg || textKwarg)
+          ? { ...idKwarg, ...textKwarg }
+          : undefined;
+        result.push({
+          role: 'tool_call',
+          content: JSON.stringify(ai.tool_calls),
+          ...(additional_kwargs !== undefined ? { additional_kwargs } : {}),
+        });
+      } else {
+        const textContent = typeof ai.content === 'string' ? ai.content : JSON.stringify(ai.content);
+        // P9: allowlist — only persist known-safe scalar keys
+        const ASSISTANT_KWARGS_ALLOWLIST = new Set(['id', 'model', 'finish_reason']);
         const filteredKwargs = Object.fromEntries(
-          Object.entries(m.additional_kwargs ?? {}).filter(([k]) => k !== 'tool_calls'),
+          Object.entries(ai.additional_kwargs ?? {}).filter(([k]) => ASSISTANT_KWARGS_ALLOWLIST.has(k)),
         );
+        const record: ConversationMessage = { role: 'assistant', content: textContent };
         if (Object.keys(filteredKwargs).length > 0) {
-          return { ...base, additional_kwargs: filteredKwargs };
+          record.additional_kwargs = filteredKwargs;
         }
+        result.push(record);
       }
+      continue;
+    }
 
-      return base;
-    });
+    if (type === 'tool') {
+      const tool = m as ToolMessage;
+      const rawId = tool.tool_call_id ?? '';
+      // P8: validate tool_call_id format — must be a non-empty string, ≤128 chars, safe chars only
+      const safeId =
+        typeof rawId === 'string' &&
+        rawId.length > 0 &&
+        rawId.length <= 128 &&
+        TOOL_CALL_ID_RE.test(rawId)
+          ? rawId
+          : '';
+      if (safeId !== rawId) {
+        logger.warn({ rawId }, 'fromBaseMessages: tool_call_id failed validation, using empty string');
+      }
+      result.push({
+        role: 'tool_result',
+        content: typeof tool.content === 'string' ? tool.content : JSON.stringify(tool.content),
+        additional_kwargs: { tool_call_id: safeId },
+      });
+      continue;
+    }
+
+    // Unknown type — skip
+  }
+
+  return result;
 }
