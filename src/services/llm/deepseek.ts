@@ -5,6 +5,79 @@ import type { ChatGenerationChunk, ChatResult } from '@langchain/core/outputs';
 import type OpenAI from 'openai';
 
 /**
+ * Strips incomplete tool-call groups from a serialised OpenAI messages array.
+ *
+ * DeepSeek returns 400 when an assistant message with `tool_calls` is not
+ * immediately followed by `tool` role messages covering every `tool_call_id`.
+ * This happens when conversation history is reloaded from the DB and the
+ * `ToolMessage` entries were not persisted.
+ *
+ * Rules:
+ * - An assistant message with a non-empty `tool_calls` array whose immediately
+ *   following `tool` messages do NOT cover all expected `tool_call_id`s is
+ *   dropped together with those partial tool messages.
+ * - A complete group (all tool_call_ids answered) is kept intact.
+ * - An assistant message with no `tool_calls` / empty `tool_calls` is untouched.
+ * - A `tool` message that appears without a preceding assistant+tool_calls is
+ *   left in place (defensive — we don't know its origin).
+ */
+export function sanitizeToolCallSequences(
+  params: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+  const result: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+  let i = 0;
+
+  while (i < params.length) {
+    const param = params[i];
+
+    // Detect an assistant message with at least one tool_call
+    if (
+      param.role === 'assistant' &&
+      'tool_calls' in param &&
+      Array.isArray(param.tool_calls) &&
+      param.tool_calls.length > 0
+    ) {
+      const expectedIds = new Set<string>(
+        param.tool_calls
+          .map((tc: { id?: string }) => tc.id)
+          .filter((id): id is string => typeof id === 'string'),
+      );
+
+      // Collect immediately following tool-role messages
+      const toolMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+      let j = i + 1;
+      while (j < params.length && params[j].role === 'tool') {
+        toolMessages.push(params[j]);
+        j++;
+      }
+
+      // Check whether every expected tool_call_id is answered
+      const answeredIds = new Set<string>(
+        toolMessages
+          .map((tm) => ('tool_call_id' in tm ? (tm as { tool_call_id?: string }).tool_call_id : undefined))
+          .filter((id): id is string => typeof id === 'string'),
+      );
+
+      const isComplete = expectedIds.size > 0 && [...expectedIds].every((id) => answeredIds.has(id));
+
+      if (isComplete) {
+        // Keep the assistant message and all its tool responses
+        result.push(param);
+        result.push(...toolMessages);
+      }
+      // If incomplete — silently drop the assistant message and any partial tool messages
+
+      i = j; // advance past both assistant and tool messages
+    } else {
+      result.push(param);
+      i++;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Injects `reasoning_content` from AIMessage.additional_kwargs into the
  * serialised OpenAI-format message params so DeepSeek thinking-mode
  * (e.g. deepseek-reasoner) does not return a 400 on multi-turn conversations.
@@ -95,10 +168,13 @@ export class ChatDeepSeekWithReasoning extends ChatDeepSeek {
     request: OpenAI.Chat.ChatCompletionCreateParams,
     requestOptions?: OpenAI.RequestOptions,
   ): Promise<OpenAI.Chat.Completions.ChatCompletion | AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
-    if (this._pendingMessages.length > 0 && Array.isArray(request.messages)) {
+    if (Array.isArray(request.messages)) {
+      const injected = this._pendingMessages.length > 0
+        ? injectReasoningContent(this._pendingMessages, request.messages)
+        : request.messages;
       request = {
         ...request,
-        messages: injectReasoningContent(this._pendingMessages, request.messages),
+        messages: sanitizeToolCallSequences(injected),
       };
     }
     // Cast needed because overload resolution on super doesn't narrow here

@@ -1,16 +1,3 @@
-#!/usr/bin/env npx tsx
-/**
- * Ad-hoc live API test for ChatDeepSeekWithReasoning.
- *
- * Verifies that multi-turn conversations with deepseek-reasoner work without
- * the 400 "reasoning_content must be passed back" error.
- *
- * Usage:
- *   npx tsx scripts/test-deepseek-reasoning.ts
- *
- * Requires DEEPSEEK_API_KEY in environment (or .env file).
- */
-
 import 'dotenv/config';
 import { HumanMessage, AIMessage } from '@langchain/core/messages';
 import { ChatDeepSeekWithReasoning } from '../src/services/llm/deepseek.js';
@@ -65,6 +52,50 @@ async function main(): Promise<void> {
   console.log('Turn 2 reasoning_content:', turn2Reasoning ?? '(none)');
 
   console.log('\n✓ Multi-turn conversation completed successfully — no 400 error.');
+
+  // --- Turn 3: simulate reloaded history with incomplete tool-call sequence ---
+  //
+  // When conversation history is loaded from the DB, ToolMessage entries may be
+  // absent (the persistence layer drops them).  The sanitiseToolCallSequences
+  // function should silently strip the incomplete group so DeepSeek never sees
+  // an assistant+tool_calls without its matching tool responses.
+  console.log('\n--- Turn 3: incomplete tool-call sequence (sanitiser smoke test) ---');
+
+  // We call completionWithRetry directly so we can inject the synthetic
+  // incomplete messages array without going through LangChain's serialiser.
+  const incompleteMessages = [
+    { role: 'user' as const, content: 'Please call my_tool for me.' },
+    {
+      role: 'assistant' as const,
+      content: null as unknown as string,
+      tool_calls: [
+        {
+          id: 'tc-smoke-1',
+          type: 'function' as const,
+          function: { name: 'my_tool', arguments: '{}' },
+        },
+      ],
+    },
+    // No tool message — simulates what the DB reload produces
+    { role: 'user' as const, content: 'What is 2+2?' },
+  ];
+
+  // completionWithRetry is public on the class — call it directly
+  const turn3Response = await (model as unknown as {
+    completionWithRetry(req: {
+      stream: false;
+      model: string;
+      messages: typeof incompleteMessages;
+    }): Promise<{ choices: Array<{ message: { content: string } }> }>;
+  }).completionWithRetry({
+    stream: false,
+    model: 'deepseek-reasoner',
+    messages: incompleteMessages,
+  });
+
+  const turn3Content = turn3Response.choices?.[0]?.message?.content ?? '(no content)';
+  console.log('Turn 3 content:', turn3Content);
+  console.log('✓ Turn 3 completed — sanitiser dropped the incomplete tool-call group, no 400 thrown.');
 }
 
 main().then(() => process.exit(0)).catch((err: unknown) => {
