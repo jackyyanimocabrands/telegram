@@ -7,7 +7,7 @@ const IV_BYTES = 12;
 const AUTH_TAG_BYTES = 16;
 // Named domain-separation salt — purpose is domain separation, not uniqueness.
 // ENCRYPTION_KEY_VERSION provides per-key versioning on top of this.
-const HKDF_SALT = Buffer.from('animocamind-telegram-connector-v1', 'utf8');
+const HKDF_SALT = Buffer.from('hellominds-telegram-connector-v1', 'utf8');
 
 /**
  * Derive a per-version AES-256 key using HKDF.
@@ -20,7 +20,7 @@ function deriveKey(keyVersion: number): Buffer {
     throw new Error(`ENCRYPTION_MASTER_KEY must be 32 bytes, got ${masterKey.length}`);
   }
 
-  const info = Buffer.from(`animocamind-v${keyVersion}`);
+  const info = Buffer.from(`hellominds-v${keyVersion}`);
   const derived = crypto.hkdfSync('sha256', masterKey, HKDF_SALT, info, 32);
   return Buffer.from(derived);
 }

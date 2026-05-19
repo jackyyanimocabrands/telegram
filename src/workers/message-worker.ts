@@ -1,0 +1,153 @@
+import { Worker, type Queue } from 'bullmq';
+import { logger } from '../utils/logger.js';
+import { releaseLock, acquireLock } from '../services/conversation-lock.js';
+import { processManagerMessage } from '../services/manager-bot.js';
+import { markNotified, getToken } from '../db/queries/email-verification-tokens.js';
+import { EMAIL_VERIFICATION_QUEUE_NAME } from '../queues/email-verification-queue.js';
+import { managerQueue as defaultManagerQueue } from '../queues/manager-queue.js';
+import type { TelegramClient } from '../services/telegram-api.js';
+import type { AgentService } from '../services/agent.js';
+import type { ManagerMessageJobData, EmailVerificationNotificationJobData } from '../queues/types.js';
+import { env } from '../config/env.js';
+
+export interface WorkerDeps {
+  telegram: TelegramClient;
+  agentService: AgentService;
+  managerBotToken: string;
+  managerBotId: string;
+  baseUrl: string;
+  botUsername: string;
+  managerQueue?: Pick<Queue<ManagerMessageJobData>, 'add'>;
+}
+
+// Escape all Telegram MarkdownV2 reserved characters in a plain string
+function escapeMdV2(text: string): string {
+  return text.replace(/[_*[\]()~`>#+=|{}.!\-\\]/g, '\\$&');
+}
+
+// BLOCKER 11: extracted named export for testability
+export async function processEmailVerificationJob(
+  job: { data: EmailVerificationNotificationJobData; id?: string },
+  deps: WorkerDeps,
+): Promise<void> {
+  const { botId, chatId, jti, userId } = job.data;
+  logger.info({ jobId: job.id, botId, chatId, jti }, 'emailVerificationWorker: processing');
+
+  // BLOCKER 2: fetch email from DB at processing time — not stored in job payload
+  const tokenRow = await getToken(jti);
+  if (!tokenRow) {
+    logger.warn({ jti }, 'processEmailVerificationJob: token not found in DB — already completed or deleted, skipping');
+    return;
+  }
+
+  const botToken = deps.managerBotToken;
+
+  // BLOCKER 3: escape email for MarkdownV2 before embedding
+  const escapedEmail = escapeMdV2(tokenRow.email);
+
+  // Send Telegram message FIRST — if this throws, markNotified is NOT called (job retried)
+  // Suppressed: the synthetic [email_verified] job below triggers the agent to respond instead
+  // await deps.telegram.sendMessage(
+  //   botToken,
+  //   chatId,
+  //   `✅ Email *${escapedEmail}* verified\\!`,
+  //   { parse_mode: 'MarkdownV2' },
+  // );
+  const marked = await markNotified(jti);
+  if (marked === 0) {
+    logger.warn({ jti }, 'processEmailVerificationJob: markNotified was a no-op (already notified or race)');
+    // Still consider this a success — user already got or will get the notification
+  }
+  logger.info({ jobId: job.id, jti }, 'emailVerificationWorker: notified');
+
+  // Enqueue synthetic manager-message to trigger authenticated onboarding immediately
+  const queue = deps.managerQueue ?? defaultManagerQueue;
+  const conversationId = `manager:${userId}`;
+  let lockAcquired = false;
+  try {
+    lockAcquired = await acquireLock(conversationId, env.LOCK_TTL_SECS);
+    if (!lockAcquired) {
+      logger.warn({ jti, userId }, 'processEmailVerificationJob: conversation locked — skipping synthetic onboarding job');
+    } else {
+      // Lock is intentionally held after successful enqueue.
+      // The manager worker releases it in its finally block — same contract as enqueueManagerMessage.
+      await queue.add('manager-message', {
+        conversationId,
+        userId,
+        chatId,
+        messageId: 0,
+        text: '[email_verified]',
+        firstName: '',
+        username: undefined,
+        languageCode: undefined,
+      }, { jobId: `email-verified-${jti}` });
+      logger.info({ jti, userId }, 'processEmailVerificationJob: synthetic onboarding job enqueued');
+    }
+  } catch (err) {
+    logger.warn({ err, jti, userId }, 'processEmailVerificationJob: failed to enqueue synthetic onboarding job — skipping');
+    if (lockAcquired) {
+      await releaseLock(conversationId).catch((releaseErr) => {
+        logger.warn({ releaseErr, conversationId }, 'processEmailVerificationJob: failed to release lock after enqueue error');
+      });
+    }
+  }
+}
+
+export function createMessageWorkers(deps: WorkerDeps): {
+  managerWorker: Worker;
+  emailVerificationWorker: Worker;
+  close: () => Promise<void>;
+} {
+  const connection = { url: env.REDIS_URL };
+
+  const managerWorker = new Worker<ManagerMessageJobData>(
+    'manager-messages',
+    async (job) => {
+      const { conversationId } = job.data;
+      logger.info({ jobId: job.id, conversationId }, 'managerWorker: processing job');
+      try {
+        await processManagerMessage(
+          job.data,
+          deps.telegram,
+          deps.agentService,
+          deps.managerBotToken,
+          deps.managerBotId,
+          deps.baseUrl,
+          deps.botUsername,
+        );
+        logger.info({ jobId: job.id, conversationId }, 'managerWorker: job complete');
+      } finally {
+        await releaseLock(conversationId).catch((err) => {
+          logger.warn({ err, conversationId }, 'managerWorker: failed to release lock');
+        });
+      }
+    },
+    { connection, concurrency: env.WORKER_CONCURRENCY },
+  );
+
+  managerWorker.on('failed', (job, err) => {
+    logger.error({ jobId: job?.id, conversationId: job?.data.conversationId, err }, 'managerWorker: job failed (log and drop)');
+  });
+
+  // BLOCKER 16: use EMAIL_WORKER_CONCURRENCY for email verification worker
+  const emailVerificationWorker = new Worker<EmailVerificationNotificationJobData>(
+    EMAIL_VERIFICATION_QUEUE_NAME,
+    (job) => processEmailVerificationJob(job, deps),
+    { connection, concurrency: env.EMAIL_WORKER_CONCURRENCY },
+  );
+
+  emailVerificationWorker.on('failed', (job, err) => {
+    logger.error({ jobId: job?.id, jti: job?.data.jti, err }, 'emailVerificationWorker: job failed');
+  });
+
+  const close = async (): Promise<void> => {
+    logger.info('Closing BullMQ workers...');
+    await Promise.all([
+      managerWorker.close(),
+      emailVerificationWorker.close(),
+    ]);
+    logger.info('BullMQ workers closed');
+  };
+
+  return { managerWorker, emailVerificationWorker, close };
+}

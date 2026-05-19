@@ -5,12 +5,11 @@ if (process.env.NODE_ENV !== 'production') {
   dotenvConfig();
 }
 
-const envSchema = z.object({
+export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   BOT_TOKEN: z.string().min(1, 'BOT_TOKEN is required'),
   BOT_USERNAME: z.string().min(1, 'BOT_USERNAME is required').transform(v => v.replace(/^@/, '')),
   WEBHOOK_SECRET: z.string().min(32).regex(/^[A-Za-z0-9_\-]+$/, 'WEBHOOK_SECRET must be at least 32 chars and contain only [A-Za-z0-9_-]'),
-  CHILD_WEBHOOK_SECRET: z.string().min(32).regex(/^[A-Za-z0-9_\-]+$/, 'CHILD_WEBHOOK_SECRET must be at least 32 chars and contain only [A-Za-z0-9_-]'),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   ENCRYPTION_MASTER_KEY: z.string().regex(/^[0-9a-f]{64}$/, 'ENCRYPTION_MASTER_KEY must be 64 hex chars (32 bytes)'),
   ENCRYPTION_KEY_VERSION: z.coerce.number().int().positive().default(1),
@@ -24,6 +23,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   BASE_URL: z.string().url('BASE_URL must be a valid URL'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  LOG_DIR: z.string().default('logs'),
   MANAGER_UPDATE_MODE: z.enum(['polling', 'webhook', 'auto'])
     .default('auto')
     .transform((val) => {
@@ -32,46 +32,60 @@ const envSchema = z.object({
       }
       return val;
     }),
-  // LLM provider configuration
+  // LLM provider API keys (cross-validation now done in src/config/llm-config.ts)
   OPENAI_API_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
-  DEFAULT_LLM_PROVIDER: z.enum(['openai', 'anthropic']).default('openai'),
-  DEFAULT_LLM_MODEL: z.string().default('gpt-4o'),
-  DEFAULT_SUMMARIZATION_PROVIDER: z.enum(['openai', 'anthropic']).default('openai'),
-  DEFAULT_SUMMARIZATION_MODEL: z.string().default('gpt-4o-mini'),
-  FALLBACK_LLM_PROVIDER: z.enum(['openai', 'anthropic']).optional(),
-  FALLBACK_LLM_MODEL: z.string().optional(),
-}).superRefine((data, ctx) => {
-  // DEFAULT_LLM_PROVIDER key requirements
-  if (data.DEFAULT_LLM_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['OPENAI_API_KEY'], message: 'OPENAI_API_KEY is required when DEFAULT_LLM_PROVIDER is "openai"' });
-  }
-  if (data.DEFAULT_LLM_PROVIDER === 'anthropic' && !data.ANTHROPIC_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ANTHROPIC_API_KEY'], message: 'ANTHROPIC_API_KEY is required when DEFAULT_LLM_PROVIDER is "anthropic"' });
-  }
-  // DEFAULT_SUMMARIZATION_PROVIDER key requirements
-  if (data.DEFAULT_SUMMARIZATION_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['OPENAI_API_KEY'], message: 'OPENAI_API_KEY is required when DEFAULT_SUMMARIZATION_PROVIDER is "openai"' });
-  }
-  if (data.DEFAULT_SUMMARIZATION_PROVIDER === 'anthropic' && !data.ANTHROPIC_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ANTHROPIC_API_KEY'], message: 'ANTHROPIC_API_KEY is required when DEFAULT_SUMMARIZATION_PROVIDER is "anthropic"' });
-  }
-  // FALLBACK_LLM_PROVIDER and FALLBACK_LLM_MODEL must both be set or neither
-  const hasProvider = data.FALLBACK_LLM_PROVIDER !== undefined;
-  const hasModel = data.FALLBACK_LLM_MODEL !== undefined;
-  if (hasProvider && !hasModel) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FALLBACK_LLM_MODEL'], message: 'FALLBACK_LLM_MODEL is required when FALLBACK_LLM_PROVIDER is set' });
-  }
-  if (hasModel && !hasProvider) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FALLBACK_LLM_PROVIDER'], message: 'FALLBACK_LLM_PROVIDER is required when FALLBACK_LLM_MODEL is set' });
-  }
-  // FALLBACK_LLM_PROVIDER API key requirements
-  if (data.FALLBACK_LLM_PROVIDER === 'openai' && !data.OPENAI_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'OPENAI_API_KEY is required when FALLBACK_LLM_PROVIDER is openai', path: ['OPENAI_API_KEY'] });
-  }
-  if (data.FALLBACK_LLM_PROVIDER === 'anthropic' && !data.ANTHROPIC_API_KEY) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'ANTHROPIC_API_KEY is required when FALLBACK_LLM_PROVIDER is anthropic', path: ['ANTHROPIC_API_KEY'] });
-  }
+  DEEPSEEK_API_KEY: z.string().optional(),
+  OPENROUTER_API_KEY: z.string().optional(),
+  // Path to the LLM config JSON file (default: config/llm.json)
+  LLM_CONFIG_PATH: z.string().optional(),
+  // Manager bot system prompts (optional — hardcoded defaults used if absent)
+  MANAGER_ONBOARDING_PROMPT: z.string().optional(),
+  MANAGER_SETTINGS_PROMPT: z.string().optional(),
+  // Streaming — minimum ms between sendMessageDraft calls; 0 = no throttle (full throttle)
+  STREAM_THROTTLE_MS: z.coerce.number().int().min(0).default(0),
+  REDIS_URL: z.string().default('redis://localhost:6379'),
+  MANAGER_THROTTLE_MS: z.coerce.number().int().min(0).default(5000),
+  WORKER_CONCURRENCY: z.coerce.number().int().min(1).default(4),
+  EMAIL_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(10),
+  JOB_RETENTION_HOURS: z.coerce.number().int().min(0).default(24),
+  LOCK_TTL_SECS: z.coerce.number().int().min(10).default(60),
+  ADMIN_API_KEY: z.string().min(32),
+  ADMIN_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000), // 15 min
+  ADMIN_RATE_LIMIT_MAX:       z.coerce.number().int().positive().default(15),
+  // Tool system
+  BOT_MGMT_API_URL: z.string().url().optional(),
+  BOT_MGMT_API_KEY: z.string().min(32).optional(),
+  EXA_API_KEY: z.string().min(1).optional(),
+  WEBFETCH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
+  WEBFETCH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
+  WEBFETCH_DOMAIN_ALLOWLIST: z.string().default(''),
+  // Email verification
+  SES_REGION: z.string().default('us-east-1'),
+  SES_FROM_ADDRESS: z.string().email().optional(),
+  EMAIL_VERIFICATION_TOKEN_TTL_SECS: z.coerce.number().int().positive().default(1800), // 30 min
+  EMAIL_VERIFICATION_RENEW_THRESHOLD_SECS: z.coerce.number().int().positive().default(300), // 5 min
+  // Ephemeral context
+  // NOTE: z.coerce.boolean() coerces ANY non-empty string to true (including "false").
+  // Use a union transform that honours the string "false" / "0" from shell environments.
+  // The transform is case-insensitive: "TRUE", "True", and "true" all map to true.
+  EPHEMERAL_CONTEXT_ENABLED: z.union([z.boolean(), z.string()])
+    .transform(v => v === true || (typeof v === 'string' && (v.toLowerCase() === 'true' || v === '1')))
+    .default(true),
+  EPHEMERAL_CONTEXT_DATETIME_ENABLED: z.union([z.boolean(), z.string()])
+    .transform(v => v === true || (typeof v === 'string' && (v.toLowerCase() === 'true' || v === '1')))
+    .default(true),
+  EPHEMERAL_CONTEXT_LOCALE_ENABLED: z.union([z.boolean(), z.string()])
+    .transform(v => v === true || (typeof v === 'string' && (v.toLowerCase() === 'true' || v === '1')))
+    .default(true),
+  DATETIME_FORMAT: z.enum(['iso', 'rfc2822', 'unix']).default('iso'),
+  // LangSmith tracing (read directly by LangChain SDK from process.env)
+  LANGCHAIN_TRACING_V2: z.union([z.boolean(), z.string()])
+    .transform(v => v === true || (typeof v === 'string' && (v.toLowerCase() === 'true' || v === '1')))
+    .default(false),
+  LANGCHAIN_API_KEY: z.string().optional(),
+  LANGCHAIN_PROJECT: z.string().optional(),
+  LANGCHAIN_ENDPOINT: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -79,8 +93,19 @@ export type Env = z.infer<typeof envSchema>;
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
+  const SENSITIVE_KEYS = new Set([
+    'ENCRYPTION_MASTER_KEY', 'ES256_PRIVATE_KEY', 'ES256_PUBLIC_KEY',
+    'BOT_TOKEN', 'BOT_USERNAME', 'WEBHOOK_SECRET', 'CHILD_WEBHOOK_SECRET',
+    'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'OPENROUTER_API_KEY',
+    'ADMIN_API_KEY', 'BOT_MGMT_API_KEY', 'EXA_API_KEY', 'LANGCHAIN_API_KEY',
+    'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY',
+  ]);
+  const errors = parsed.error.flatten().fieldErrors;
+  const redacted = Object.fromEntries(
+    Object.entries(errors).map(([k, v]) => [k, SENSITIVE_KEYS.has(k) ? ['[REDACTED]'] : v]),
+  );
   console.error('Invalid environment variables:');
-  console.error(parsed.error.flatten().fieldErrors);
+  console.error(redacted);
   process.exit(1);
 }
 

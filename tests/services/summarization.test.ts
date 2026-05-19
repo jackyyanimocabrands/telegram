@@ -87,7 +87,7 @@ describe('SummarizationService', () => {
     it('calls factory.create with summarization_provider and summarization_model when over budget', async () => {
       estimateTokensStub.returns(99999); // over budget
 
-      const providerStub = { complete: sinon.stub().resolves('summary text') };
+      const providerStub = { invoke: sinon.stub().resolves({ content: 'summary text' }) };
       const factoryStub = { create: sinon.stub().returns(providerStub) };
 
       const messages = [
@@ -115,7 +115,7 @@ describe('SummarizationService', () => {
       estimateTokensStub.returns(99999); // over budget
 
       const newSummary = 'user likes stargazing';
-      const providerStub = { complete: sinon.stub().resolves(newSummary) };
+      const providerStub = { invoke: sinon.stub().resolves({ content: newSummary }) };
       const factoryStub = { create: sinon.stub().returns(providerStub) };
 
       const messages = [
@@ -142,7 +142,7 @@ describe('SummarizationService', () => {
     it('catches and logs error if LLM call throws, does NOT rethrow', async () => {
       estimateTokensStub.returns(99999); // over budget
 
-      const providerStub = { complete: sinon.stub().rejects(new Error('LLM blew up')) };
+      const providerStub = { invoke: sinon.stub().rejects(new Error('LLM blew up')) };
       const factoryStub = { create: sinon.stub().returns(providerStub) };
 
       const row = makeRow({
@@ -197,7 +197,7 @@ describe('SummarizationService', () => {
         },
       );
 
-      const providerStub = { complete: sinon.stub().rejects(new Error('LLM blew up')) };
+      const providerStub = { invoke: sinon.stub().rejects(new Error('LLM blew up')) };
       const factoryStub = { create: sinon.stub().returns(providerStub) };
 
       const row = makeRow({
@@ -218,7 +218,7 @@ describe('SummarizationService', () => {
     it('catches and logs error if updateConversationMessages throws, does NOT rethrow', async () => {
       estimateTokensStub.returns(99999); // over budget
 
-      const providerStub = { complete: sinon.stub().resolves('summary') };
+      const providerStub = { invoke: sinon.stub().resolves({ content: 'summary' }) };
       const factoryStub = { create: sinon.stub().returns(providerStub) };
       updateConversationMessagesStub.rejects(new Error('DB error'));
 

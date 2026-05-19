@@ -20,12 +20,15 @@ export class MockTelegramClient implements TelegramClient {
   deleteWebhook = sinon.stub().resolves(true);
   getWebhookInfo = sinon.stub();
   sendMessage = sinon.stub();
+  sendMessageDraft = sinon.stub().resolves(true);
+  sendChatAction = sinon.stub().resolves(true);
   setMyName = sinon.stub().resolves(true);
   setMyDescription = sinon.stub().resolves(true);
   setMyShortDescription = sinon.stub().resolves(true);
   setMyCommands = sinon.stub().resolves(true);
   answerCallbackQuery = sinon.stub().resolves(true);
   replaceManagedBotToken = sinon.stub();
+  getManagedBotToken = sinon.stub();
 
   reset(): void {
     sinon.resetHistory();
@@ -77,5 +80,9 @@ export class MockTelegramClient implements TelegramClient {
 
   whenReplaceManagedBotToken(result: string): void {
     this.replaceManagedBotToken.resolves(result);
+  }
+
+  whenGetManagedBotToken(result: string): void {
+    this.getManagedBotToken.resolves(result);
   }
 }

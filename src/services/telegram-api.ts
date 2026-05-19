@@ -52,6 +52,18 @@ export interface TelegramClient {
     text: string,
     options?: Record<string, unknown>,
   ): Promise<Message>;
+  sendMessageDraft(
+    token: string,
+    chatId: number | string,
+    draftId: number,
+    text?: string,
+    parseMode?: string,
+  ): Promise<boolean>;
+  sendChatAction(
+    token: string,
+    chatId: number | string,
+    action: string,
+  ): Promise<boolean>;
   setMyName(token: string, name: string, description?: string): Promise<boolean>;
   setMyDescription(token: string, description: string): Promise<boolean>;
   setMyShortDescription(token: string, description: string): Promise<boolean>;
@@ -62,6 +74,7 @@ export interface TelegramClient {
     text?: string,
   ): Promise<boolean>;
   replaceManagedBotToken(managerToken: string, botUserId: number): Promise<string>;
+  getManagedBotToken(managerToken: string, botUserId: number): Promise<string>;
 }
 
 const BASE_URL = 'https://api.telegram.org';
@@ -194,6 +207,32 @@ export class HttpTelegramClient implements TelegramClient {
     return this.call<Message>(token, 'sendMessage', { chat_id: chatId, text, ...options });
   }
 
+  async sendMessageDraft(
+    token: string,
+    chatId: number | string,
+    draftId: number,
+    text?: string,
+    parseMode?: string,
+  ): Promise<boolean> {
+    logger.debug({ chatId, draftId, textLength: (text ?? '').length }, 'sendMessageDraft: called');
+    const body: Record<string, unknown> = {
+      chat_id: chatId,
+      draft_id: draftId,
+      text: text ?? '',
+    };
+    if (parseMode) body['parse_mode'] = parseMode;
+    return this.call<boolean>(token, 'sendMessageDraft', body);
+  }
+
+  async sendChatAction(
+    token: string,
+    chatId: number | string,
+    action: string,
+  ): Promise<boolean> {
+    logger.debug({ chatId, action }, 'sendChatAction: called');
+    return this.call<boolean>(token, 'sendChatAction', { chat_id: chatId, action });
+  }
+
   async setMyName(token: string, name: string, _description?: string): Promise<boolean> {
     logger.debug({ name }, 'setMyName: called');
     return this.call<boolean>(token, 'setMyName', { name });
@@ -229,5 +268,10 @@ export class HttpTelegramClient implements TelegramClient {
   async replaceManagedBotToken(managerToken: string, botUserId: number): Promise<string> {
     logger.debug({ botUserId }, 'replaceManagedBotToken: called');
     return this.call<string>(managerToken, 'replaceManagedBotToken', { user_id: botUserId });
+  }
+
+  async getManagedBotToken(managerToken: string, botUserId: number): Promise<string> {
+    logger.debug({ botUserId }, 'getManagedBotToken: called');
+    return this.call<string>(managerToken, 'getManagedBotToken', { user_id: botUserId });
   }
 }

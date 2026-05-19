@@ -100,7 +100,7 @@ describe('managed-bots queries', () => {
       const result = await upsertManagedBot({
         botId: 42,
         ownerTelegramId: 1,
-        ownerUserId: 1,
+        ownerUserId: 'a0000000-0000-0000-0000-000000000001',
         encryptedToken: Buffer.alloc(0),
         tokenIv: Buffer.alloc(0),
         tokenKeyVersion: 1,

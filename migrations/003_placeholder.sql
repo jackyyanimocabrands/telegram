@@ -1,3 +1,0 @@
--- Migration 003 was intentionally skipped during initial development.
--- This placeholder exists to document the gap in migration numbering.
--- The sequence continues at 004_create_webhook_log.sql.

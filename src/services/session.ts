@@ -4,7 +4,9 @@ import { logger } from '../utils/logger.js';
 import { AppError, AuthenticationError } from '../utils/errors.js';
 import type { AuthenticatedUser } from '../types/api.js';
 
-const APP_ISSUER = 'animocamind-telegram-connector';
+const APP_ISSUER = 'hellominds-telegram-connector';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Issue an ES256 access token with a global version claim.
@@ -51,9 +53,9 @@ export function verifyAccessToken(token: string): AuthenticatedUser {
       throw new Error('Token version mismatch');
     }
 
-    // M-11: Guard against NaN/Infinity if `sub` is malformed
-    const id = parseInt(decoded.sub as string, 10);
-    if (!Number.isFinite(id) || id <= 0) {
+    // M-11: Guard against missing/malformed `sub` UUID
+    const id = decoded.sub as string;
+    if (!id || !UUID_RE.test(id)) {
       throw new AppError('Invalid token subject', 401, 'INVALID_TOKEN');
     }
 
@@ -80,7 +82,7 @@ export function verifyAccessToken(token: string): AuthenticatedUser {
 }
 
 export interface RefreshTokenPayload {
-  sub: number;
+  sub: string;
   telegramId: number;
   type: 'refresh';
   ver: number;
@@ -135,8 +137,8 @@ export function verifyRefreshToken(token: string): RefreshTokenPayload {
       throw new AuthenticationError('Token version mismatch');
     }
 
-    const id = parseInt(decoded.sub as string, 10);
-    if (!Number.isFinite(id) || id <= 0) {
+    const id = decoded.sub as string;
+    if (!id || !UUID_RE.test(id)) {
       throw new AuthenticationError('Invalid token subject');
     }
 

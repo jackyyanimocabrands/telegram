@@ -1,0 +1,130 @@
+import { describe, it } from 'mocha';
+import { expect } from 'chai';
+import { toTelegramMarkdownV2 } from '../../src/utils/telegram-markdownv2.js';
+
+describe('toTelegramMarkdownV2', () => {
+  it('passes plain alphabetic text through unchanged', () => {
+    expect(toTelegramMarkdownV2('hello world')).to.equal('hello world');
+  });
+
+  it('escapes a dot in plain text', () => {
+    expect(toTelegramMarkdownV2('hello.world')).to.equal('hello\\.world');
+  });
+
+  it('converts **bold** to *bold*', () => {
+    expect(toTelegramMarkdownV2('**bold**')).to.equal('*bold*');
+  });
+
+  it('converts _italic_ to _italic_', () => {
+    expect(toTelegramMarkdownV2('_italic_')).to.equal('_italic_');
+  });
+
+  it('converts ~~strike~~ to ~strike~', () => {
+    expect(toTelegramMarkdownV2('~~strike~~')).to.equal('~strike~');
+  });
+
+  it('preserves inline code unchanged (no special chars inside)', () => {
+    expect(toTelegramMarkdownV2('`code`')).to.equal('`code`');
+  });
+
+  it('converts # Heading to *Heading*', () => {
+    expect(toTelegramMarkdownV2('# Heading')).to.equal('*Heading*');
+  });
+
+  it('escapes dot inside bold content', () => {
+    expect(toTelegramMarkdownV2('**bold with . dot**')).to.equal('*bold with \\. dot*');
+  });
+
+  it('escapes backtick inside fenced code block', () => {
+    const input = '```\nlet x = `hello`;\n```';
+    const output = toTelegramMarkdownV2(input);
+    // outer ``` preserved, inner backtick escaped
+    expect(output).to.include('```');
+    expect(output).to.include('\\`');
+  });
+
+  it('handles mixed bold + plain text + inline code', () => {
+    const input = '**hello** world `code`';
+    const output = toTelegramMarkdownV2(input);
+    expect(output).to.include('*hello*');
+    expect(output).to.include('world');
+    expect(output).to.include('`code`');
+  });
+
+  it('returns empty string unchanged', () => {
+    expect(toTelegramMarkdownV2('')).to.equal('');
+  });
+
+  it('escapes all MarkdownV2 special chars in plain text', () => {
+    const input = 'price: 1.00 (usd) [link] {key} | test! #tag +1 -1 =x';
+    const output = toTelegramMarkdownV2(input);
+    // None of the special chars should appear unescaped
+    // Check a few representative ones
+    expect(output).to.include('1\\.00');
+    expect(output).to.include('\\(usd\\)');
+    expect(output).to.include('\\[link\\]');
+    expect(output).to.include('\\|');
+    expect(output).to.include('\\!');
+  });
+
+  it('converts ## heading to *heading*', () => {
+    expect(toTelegramMarkdownV2('## Section')).to.equal('*Section*');
+  });
+
+  it('converts ### heading to *heading*', () => {
+    expect(toTelegramMarkdownV2('### Sub')).to.equal('*Sub*');
+  });
+
+  it('converts [text](url) link', () => {
+    const output = toTelegramMarkdownV2('[click here](https://example.com)');
+    expect(output).to.equal('[click here](https://example.com)');
+  });
+
+  it('escapes special chars inside link text but not URL', () => {
+    const output = toTelegramMarkdownV2('[hello.world](https://example.com/path)');
+    expect(output).to.equal('[hello\\.world](https://example.com/path)');
+  });
+
+  it('converts **[text](url)** bold link atomically', () => {
+    const output = toTelegramMarkdownV2('**[click here](https://example.com)**');
+    expect(output).to.equal('*[click here](https://example.com)*');
+  });
+
+  it('bold link with URL special chars — URL is not over-escaped', () => {
+    const output = toTelegramMarkdownV2("**[Bot](https://t.me/bot?name=Jacky%27s%20Bot)**");
+    expect(output).to.equal("*[Bot](https://t.me/bot?name=Jacky%27s%20Bot)*");
+  });
+
+  it('plain link URL is not over-escaped (no ) or \\ in URL)', () => {
+    const output = toTelegramMarkdownV2('[click here](https://example.com/path_to/page.html)');
+    expect(output).to.equal('[click here](https://example.com/path_to/page.html)');
+  });
+
+  it('bold text without link still works after bold+link handler added', () => {
+    expect(toTelegramMarkdownV2('**hello world**')).to.equal('*hello world*');
+  });
+
+  it('bold and plain link on the same line both render correctly', () => {
+    const output = toTelegramMarkdownV2('**bold** and [link](https://example.com)');
+    expect(output).to.equal('*bold* and [link](https://example.com)');
+  });
+
+  it('link with bold text: [**click here**](url) → [*click here*](url)', () => {
+    const output = toTelegramMarkdownV2('[**click here**](https://example.com)');
+    expect(output).to.equal('[*click here*](https://example.com)');
+  });
+
+  it("link with bold text containing special chars: [**Aryoukitten's Bot**](url) — apostrophe not escaped", () => {
+    const output = toTelegramMarkdownV2("[**Aryoukitten's Bot**](https://t.me/bot)");
+    expect(output).to.equal("[*Aryoukitten's Bot*](https://t.me/bot)");
+  });
+
+  it('bold link regression: **[click here](url)** still renders correctly', () => {
+    const output = toTelegramMarkdownV2('**[click here](https://example.com)**');
+    expect(output).to.equal('*[click here](https://example.com)*');
+  });
+
+  it('plain **text** still works normally (no infinite loop, no regression)', () => {
+    expect(toTelegramMarkdownV2('**text**')).to.equal('*text*');
+  });
+});

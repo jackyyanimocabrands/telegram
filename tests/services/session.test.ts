@@ -6,7 +6,7 @@ import { env } from '../../src/config/env.js';
 import type { AuthenticatedUser } from '../../src/types/api.js';
 
 const testUser: AuthenticatedUser = {
-  id: 1,
+  id: 'a0000000-0000-0000-0000-000000000001',
   telegramId: 99887766,
   firstName: 'Test',
   username: 'testuser',
@@ -55,9 +55,9 @@ describe('session', () => {
       // Sign a valid token but omit the telegramId claim.
       // B-2: Must include audience so verifyAccessToken does not reject it before reaching our check.
       const tokenWithoutTelegramId = jwt.sign(
-        { sub: '1', firstName: 'Test', ver: env.JWT_VERSION },
+        { sub: 'a0000000-0000-0000-0000-000000000001', firstName: 'Test', ver: env.JWT_VERSION },
         env.ES256_PRIVATE_KEY,
-        { algorithm: 'ES256', expiresIn: 900, issuer: 'animocamind-telegram-connector', audience: 'animocamind-telegram-connector' },
+        { algorithm: 'ES256', expiresIn: 900, issuer: 'hellominds-telegram-connector', audience: 'hellominds-telegram-connector' },
       );
       expect(() => verifyAccessToken(tokenWithoutTelegramId)).to.throw();
     });
@@ -66,9 +66,9 @@ describe('session', () => {
       // Sign a valid token but omit the firstName claim.
       // B-2: Must include audience so verifyAccessToken does not reject it before reaching our check.
       const tokenWithoutFirstName = jwt.sign(
-        { sub: '1', telegramId: 99887766, ver: env.JWT_VERSION },
+        { sub: 'a0000000-0000-0000-0000-000000000001', telegramId: 99887766, ver: env.JWT_VERSION },
         env.ES256_PRIVATE_KEY,
-        { algorithm: 'ES256', expiresIn: 900, issuer: 'animocamind-telegram-connector', audience: 'animocamind-telegram-connector' },
+        { algorithm: 'ES256', expiresIn: 900, issuer: 'hellominds-telegram-connector', audience: 'hellominds-telegram-connector' },
       );
       expect(() => verifyAccessToken(tokenWithoutFirstName)).to.throw();
     });

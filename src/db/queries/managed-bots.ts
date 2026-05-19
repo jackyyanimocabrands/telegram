@@ -7,7 +7,7 @@ export async function upsertManagedBot(data: {
   botId: number;
   botUsername?: string;
   ownerTelegramId: number;
-  ownerUserId: number;
+  ownerUserId: string;
   encryptedToken: Buffer;
   tokenIv: Buffer;
   tokenKeyVersion: number;
@@ -183,9 +183,9 @@ export async function deactivateStalePendingBots(ageMinutes: number = 5): Promis
 }
 
 /**
- * B-5: Fetch the per-bot webhook secret (encrypted) for a given bot.
- * Returns null if the bot is not found or not ACTIVE.
- * The caller (token-store) is responsible for decrypting the returned ciphertext.
+ * Deactivates bots that are stuck in PENDING or PROVISIONING status
+ * for longer than `ageMinutes`. Called at startup to recover from
+ * crashed mid-provisioning processes.
  */
 export async function getBotWebhookSecret(botId: number): Promise<{
   webhook_secret: Buffer | null;

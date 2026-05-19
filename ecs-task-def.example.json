@@ -1,7 +1,7 @@
 {
   "_comment": "ECS Task Definition TEMPLATE — replace all <PLACEHOLDER> values before registering. Do NOT commit real ARNs or account IDs.",
 
-  "family": "animocamind-telegram-connector",
+  "family": "hellominds-telegram-connector",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
 
@@ -9,12 +9,12 @@
   "memory": "512",
 
   "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
-  "taskRoleArn":      "arn:aws:iam::<ACCOUNT_ID>:role/animocamind-telegram-connector-task-role",
+  "taskRoleArn":      "arn:aws:iam::<ACCOUNT_ID>:role/hellominds-telegram-connector-task-role",
 
   "containerDefinitions": [
     {
-      "name": "animocamind-telegram-connector",
-      "image": "<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/animocamind-telegram-connector:<IMAGE_TAG>",
+      "name": "hellominds-telegram-connector",
+      "image": "<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/hellominds-telegram-connector:<IMAGE_TAG>",
       "essential": true,
 
       "portMappings": [
@@ -36,7 +36,7 @@
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
-          "awslogs-group":         "/ecs/animocamind-telegram-connector",
+          "awslogs-group":         "/ecs/hellominds-telegram-connector",
           "awslogs-region":        "<REGION>",
           "awslogs-stream-prefix": "ecs"
         }
@@ -46,31 +46,31 @@
       "secrets": [
         {
           "name":      "BOT_TOKEN",
-          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:animocamind/telegram-connector/BOT_TOKEN"
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:hellominds/telegram-connector/BOT_TOKEN"
         },
         {
           "name":      "ENCRYPTION_MASTER_KEY",
-          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:animocamind/telegram-connector/ENCRYPTION_MASTER_KEY"
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:hellominds/telegram-connector/ENCRYPTION_MASTER_KEY"
         },
         {
           "name":      "ES256_PRIVATE_KEY",
-          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:animocamind/telegram-connector/ES256_PRIVATE_KEY"
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:hellominds/telegram-connector/ES256_PRIVATE_KEY"
         },
         {
           "name":      "ES256_PUBLIC_KEY",
-          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:animocamind/telegram-connector/ES256_PUBLIC_KEY"
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:hellominds/telegram-connector/ES256_PUBLIC_KEY"
         },
         {
           "name":      "DATABASE_URL",
-          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:animocamind/telegram-connector/DATABASE_URL"
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:hellominds/telegram-connector/DATABASE_URL"
         },
         {
           "name":      "WEBHOOK_SECRET",
-          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:animocamind/telegram-connector/WEBHOOK_SECRET"
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:hellominds/telegram-connector/WEBHOOK_SECRET"
         },
         {
           "name":      "CHILD_WEBHOOK_SECRET",
-          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:animocamind/telegram-connector/CHILD_WEBHOOK_SECRET"
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:hellominds/telegram-connector/CHILD_WEBHOOK_SECRET"
         }
       ],
 
