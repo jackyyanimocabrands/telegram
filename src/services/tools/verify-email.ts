@@ -17,7 +17,7 @@ export function createVerifyEmailTool(botId: string, userId: string) {
     },
     {
       name: 'verify_email',
-      description: 'Send a verification email to confirm the user owns an email address. Call this when the user wants to verify their email to unlock additional tools.',
+      description: 'Send or resend a verification email to confirm the user owns an email address. Call this when: (1) the user provides their email for the first time, (2) the user asks to resend or says they did not receive the email, (3) the user wants to try again. Always call this tool — never confirm an email was sent without an active call in this response.',
       schema: z.object({
         email: z.string().email().describe('The email address to verify'),
       }),
