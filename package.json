@@ -25,6 +25,7 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "db:migrate": "tsx src/db/migrate.ts",
     "set-webhook": "tsx scripts/set-webhook.ts",
+    "set-commands": "tsx scripts/set-commands.ts",
     "verify-manager": "tsx scripts/verify-manager.ts",
     "generate-api-key": "tsx scripts/generate-api-key.ts"
   },

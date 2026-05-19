@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger.js';
+import { MANAGER_BOT_COMMANDS } from '../config/bot-commands.js';
 import { findManagedBotByOwner } from '../db/queries/managed-bots.js';
 import { getToolsetState } from '../db/queries/conversations.js';
 import { env } from '../config/env.js';
@@ -16,6 +17,10 @@ import type { Queue } from 'bullmq';
 import type { ManagerMessageJobData } from '../queues/types.js';
 
 const TELEGRAM_USERNAME_RE = /^[a-zA-Z0-9_]{5,32}$/;
+
+const HELP_TEXT = `Here's what I can do:\n\n• Answer questions and help with everyday tasks\n• Search the web and look things up\n• Guide you through creating your own Mind — a personal AI agent built for you\n\nCommands:\n${
+  MANAGER_BOT_COMMANDS.map(c => `  /${c.command} – ${c.description}`).join('\n')
+}\n\nJust send me a message to get started!`;
 
 export function parseCommand(text: string): string | null {
   const match = text.match(/^\/([a-z0-9_]{1,31})(?:@\w+)?(?:\s|$)/i);
@@ -80,7 +85,7 @@ async function handleCommands(
     await telegram.sendMessage(
       token,
       chatId,
-      `Here's what I can do:\n\n• Answer questions and help with everyday tasks\n• Search the web and look things up\n• Guide you through creating your own Mind — a personal AI agent built for you\n\nCommands:\n  /start – start or restart the conversation\n  /help  – show this message\n\nJust send me a message to get started!`,
+      HELP_TEXT,
     );
   } catch (err) {
     logger.warn({ err, chatId }, 'handleCommands: failed to send /help reply');

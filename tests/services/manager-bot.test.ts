@@ -1,8 +1,9 @@
-import { describe, it, beforeEach, afterEach } from 'mocha';
+import { describe, it, before, beforeEach, afterEach } from 'mocha';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import esmock from 'esmock';
 import { MockTelegramClient } from '../mocks/telegram-client.js';
+import { MANAGER_BOT_COMMANDS } from '../../src/config/bot-commands.js';
 
 describe('handleManagerBotMessage', () => {
   let handleManagerBotMessage: any;
@@ -323,7 +324,10 @@ describe('handleManagerBotMessage', () => {
     expect(agentServiceStub.chatStream.called).to.be.false;
     expect(mockTelegram.sendMessage.calledOnce).to.be.true;
     const reply: string = mockTelegram.sendMessage.firstCall.args[2];
-    expect(reply).to.include('/help');
+    for (const cmd of MANAGER_BOT_COMMANDS) {
+      expect(reply).to.include(`/${cmd.command}`);
+      expect(reply).to.include(cmd.description);
+    }
   });
 
   it('empty text → chatStream is NOT called, no sendMessage', async () => {
@@ -614,7 +618,10 @@ describe('enqueueManagerMessage', () => {
     await enqueueManagerMessage(message, mockTelegram, MANAGER_TOKEN, BOT_USERNAME);
     expect(mockTelegram.sendMessage.calledOnce).to.be.true;
     const reply: string = mockTelegram.sendMessage.firstCall.args[2];
-    expect(reply).to.include('/help');
+    for (const cmd of MANAGER_BOT_COMMANDS) {
+      expect(reply).to.include(`/${cmd.command}`);
+      expect(reply).to.include(cmd.description);
+    }
     // command throttle uses manager-cmd: key — normal lock/queue are NOT invoked
     expect(checkThrottleStub.firstCall.args[0]).to.equal('manager-cmd:42');
     expect(acquireLockStub.called).to.be.false;
@@ -1013,5 +1020,38 @@ describe('parseCommand', () => {
 
   it("'/helper' → 'helper' (not 'help')", () => {
     expect(parseCommand('/helper')).to.equal('helper');
+  });
+});
+
+describe('MANAGER_BOT_COMMANDS', () => {
+  it('is a non-empty array', () => {
+    expect(MANAGER_BOT_COMMANDS).to.be.an('array').with.length.greaterThan(0);
+  });
+
+  it('every element has a non-empty command string (no whitespace, length 1–32)', () => {
+    for (const cmd of MANAGER_BOT_COMMANDS) {
+      expect(cmd.command).to.be.a('string').with.length.greaterThan(0);
+      expect(cmd.command).to.have.length.at.most(32);
+      expect(cmd.command).to.not.match(/\s/, `command "${cmd.command}" must not contain whitespace`);
+    }
+  });
+
+  it('every element has a non-empty description string', () => {
+    for (const cmd of MANAGER_BOT_COMMANDS) {
+      expect(cmd.description).to.be.a('string').with.length.greaterThan(0);
+    }
+  });
+
+  it('command values are unique (no duplicates)', () => {
+    const commands = MANAGER_BOT_COMMANDS.map(cmd => cmd.command);
+    const unique = new Set(commands);
+    expect(unique.size).to.equal(commands.length);
+  });
+
+  it('no command contains "/" or "@"', () => {
+    for (const cmd of MANAGER_BOT_COMMANDS) {
+      expect(cmd.command).to.not.include('/', `command "${cmd.command}" must not contain "/"`);
+      expect(cmd.command).to.not.include('@', `command "${cmd.command}" must not contain "@"`);
+    }
   });
 });
