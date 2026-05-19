@@ -5,3 +5,4 @@ export { createWebfetchTool } from './webfetch.js';
 export { createVerifyEmailTool } from './verify-email.js';
 export { createClearEmailVerificationTool } from './clear-email-verification.js';
 export { createCheckBotUsernameTool } from './check-bot-username.js';
+export { createSaveMindContextTool } from './save-mind-context.js';

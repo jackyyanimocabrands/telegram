@@ -9,6 +9,7 @@ import {
   createVerifyEmailTool,
   createClearEmailVerificationTool,
   createCheckBotUsernameTool,
+  createSaveMindContextTool,
 } from './tools/index.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -64,6 +65,7 @@ export function getToolsForTier(tier: ToolTier, deps: ToolDeps): StructuredTool[
   if (tier === 'base') {
     return [
       createVerifyEmailTool(deps.botId, deps.userId),
+      createSaveMindContextTool(deps.botId, deps.userId, deps.pool),
       createCheckBotUsernameTool(deps.botId, deps.userId),
       ...sharedTools,
     ];

@@ -33,6 +33,7 @@ let createWebfetchToolStub: sinon.SinonStub;
 let createVerifyEmailToolStub: sinon.SinonStub;
 let createClearEmailVerificationToolStub: sinon.SinonStub;
 let createCheckBotUsernameToolStub: sinon.SinonStub;
+let createSaveMindContextToolStub: sinon.SinonStub;
 
 async function buildModule() {
   return esmock('../../src/services/tool-tier.ts', {
@@ -44,6 +45,7 @@ async function buildModule() {
       createVerifyEmailTool: createVerifyEmailToolStub,
       createClearEmailVerificationTool: createClearEmailVerificationToolStub,
       createCheckBotUsernameTool: createCheckBotUsernameToolStub,
+      createSaveMindContextTool: createSaveMindContextToolStub,
     },
   });
 }
@@ -59,6 +61,7 @@ describe('tool-tier', () => {
     createVerifyEmailToolStub = sinon.stub().returns(makeTool('verify_email'));
     createClearEmailVerificationToolStub = sinon.stub().returns(makeTool('clear_email_verification'));
     createCheckBotUsernameToolStub = sinon.stub().returns(makeTool('check_bot_username'));
+    createSaveMindContextToolStub = sinon.stub().returns(makeTool('save_mind_context'));
   });
 
   afterEach(async () => {
@@ -105,12 +108,13 @@ describe('tool-tier', () => {
       userId: '42',
     };
 
-    it('returns array of length 4 for "base" tier (verify_email, check_bot_username, web_fetch, web_search)', async () => {
+    it('returns array of length 5 for "base" tier (verify_email, save_mind_context, check_bot_username, web_fetch, web_search)', async () => {
       const { getToolsForTier } = await buildModule();
       const tools = getToolsForTier('base', deps);
-      expect(tools).to.be.an('array').with.length(4);
+      expect(tools).to.be.an('array').with.length(5);
       const names = tools.map((t: StructuredTool) => t.name);
       expect(names).to.include('verify_email');
+      expect(names).to.include('save_mind_context');
       expect(names).to.include('check_bot_username');
       expect(names).to.include('web_fetch');
       expect(names).to.include('web_search');
@@ -132,6 +136,8 @@ describe('tool-tier', () => {
       expect(names).to.include('check_bot_username');
       expect(names).to.include('web_fetch');
       expect(names).to.include('web_search');
+      // save_mind_context must NOT be in authenticated tier
+      expect(names).to.not.include('save_mind_context');
     });
 
     it('passes userEmail to createCreateBotTool', async () => {

@@ -1,9 +1,10 @@
-import { Worker } from 'bullmq';
+import { Worker, type Queue } from 'bullmq';
 import { logger } from '../utils/logger.js';
-import { releaseLock } from '../services/conversation-lock.js';
+import { releaseLock, acquireLock } from '../services/conversation-lock.js';
 import { processManagerMessage } from '../services/manager-bot.js';
 import { markNotified, getToken } from '../db/queries/email-verification-tokens.js';
 import { EMAIL_VERIFICATION_QUEUE_NAME } from '../queues/email-verification-queue.js';
+import { managerQueue as defaultManagerQueue } from '../queues/manager-queue.js';
 import type { TelegramClient } from '../services/telegram-api.js';
 import type { AgentService } from '../services/agent.js';
 import type { ManagerMessageJobData, EmailVerificationNotificationJobData } from '../queues/types.js';
@@ -16,6 +17,7 @@ export interface WorkerDeps {
   managerBotId: string;
   baseUrl: string;
   botUsername: string;
+  managerQueue?: Pick<Queue<ManagerMessageJobData>, 'add'>;
 }
 
 // Escape all Telegram MarkdownV2 reserved characters in a plain string
@@ -28,7 +30,7 @@ export async function processEmailVerificationJob(
   job: { data: EmailVerificationNotificationJobData; id?: string },
   deps: WorkerDeps,
 ): Promise<void> {
-  const { botId, chatId, jti } = job.data;
+  const { botId, chatId, jti, userId } = job.data;
   logger.info({ jobId: job.id, botId, chatId, jti }, 'emailVerificationWorker: processing');
 
   // BLOCKER 2: fetch email from DB at processing time — not stored in job payload
@@ -47,7 +49,7 @@ export async function processEmailVerificationJob(
   await deps.telegram.sendMessage(
     botToken,
     chatId,
-    `✅ Email *${escapedEmail}* verified\\! Reply here and I'll help you create your Mind — it only takes 60 seconds\\.`,
+    `✅ Email *${escapedEmail}* verified\\!`,
     { parse_mode: 'MarkdownV2' },
   );
   const marked = await markNotified(jti);
@@ -56,6 +58,38 @@ export async function processEmailVerificationJob(
     // Still consider this a success — user already got or will get the notification
   }
   logger.info({ jobId: job.id, jti }, 'emailVerificationWorker: notified');
+
+  // Enqueue synthetic manager-message to trigger authenticated onboarding immediately
+  const queue = deps.managerQueue ?? defaultManagerQueue;
+  const conversationId = `manager:${userId}`;
+  let lockAcquired = false;
+  try {
+    lockAcquired = await acquireLock(conversationId, env.LOCK_TTL_SECS);
+    if (!lockAcquired) {
+      logger.warn({ jti, userId }, 'processEmailVerificationJob: conversation locked — skipping synthetic onboarding job');
+    } else {
+      // Lock is intentionally held after successful enqueue.
+      // The manager worker releases it in its finally block — same contract as enqueueManagerMessage.
+      await queue.add('manager-message', {
+        conversationId,
+        userId,
+        chatId,
+        messageId: 0,
+        text: '[email_verified]',
+        firstName: '',
+        username: undefined,
+        languageCode: undefined,
+      }, { jobId: `email-verified-${jti}` });
+      logger.info({ jti, userId }, 'processEmailVerificationJob: synthetic onboarding job enqueued');
+    }
+  } catch (err) {
+    logger.warn({ err, jti, userId }, 'processEmailVerificationJob: failed to enqueue synthetic onboarding job — skipping');
+    if (lockAcquired) {
+      await releaseLock(conversationId).catch((releaseErr) => {
+        logger.warn({ releaseErr, conversationId }, 'processEmailVerificationJob: failed to release lock after enqueue error');
+      });
+    }
+  }
 }
 
 export function createMessageWorkers(deps: WorkerDeps): {

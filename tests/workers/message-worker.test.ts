@@ -8,6 +8,9 @@ describe('processEmailVerificationJob', () => {
   let getTokenStub: sinon.SinonStub;
   let markNotifiedStub: sinon.SinonStub;
   let sendMessageStub: sinon.SinonStub;
+  let acquireLockStub: sinon.SinonStub;
+  let releaseLockStub: sinon.SinonStub;
+  let managerQueueAddStub: sinon.SinonStub;
 
   const MANAGER_BOT_ID = 'manager-bot-123';
   const MANAGER_BOT_TOKEN = 'manager-token-abc';
@@ -20,6 +23,7 @@ describe('processEmailVerificationJob', () => {
       managerBotId: overrides.managerBotId ?? MANAGER_BOT_ID,
       baseUrl: 'https://example.com',
       botUsername: 'TestBot',
+      managerQueue: { add: managerQueueAddStub },
     };
   }
 
@@ -53,15 +57,21 @@ describe('processEmailVerificationJob', () => {
     getTokenStub = sinon.stub();
     markNotifiedStub = sinon.stub().resolves(1);
     sendMessageStub = sinon.stub().resolves();
+    acquireLockStub = sinon.stub().resolves(true);
+    releaseLockStub = sinon.stub().resolves();
+    managerQueueAddStub = sinon.stub().resolves({ id: 'synthetic-job-1' });
 
     const mod = await esmock('../../src/workers/message-worker.ts', {
       '../../src/db/queries/email-verification-tokens.js': {
         getToken: getTokenStub,
         markNotified: markNotifiedStub,
       },
-      // Stub out other deps that are imported at module level
       '../../src/services/conversation-lock.js': {
-        releaseLock: sinon.stub().resolves(),
+        releaseLock: releaseLockStub,
+        acquireLock: acquireLockStub,
+      },
+      '../../src/queues/manager-queue.js': {
+        managerQueue: { add: managerQueueAddStub },
       },
       '../../src/services/manager-bot.js': {
         processManagerMessage: sinon.stub().resolves(),
@@ -89,9 +99,9 @@ describe('processEmailVerificationJob', () => {
     expect(markNotifiedStub.called).to.be.false;
   });
 
-  // ── 3. Happy path: sendMessage with escaped email, markNotified called ────
+  // ── 3. Happy path: sendMessage with escaped email (short CTA), markNotified called ────
 
-  it('3. happy path: sendMessage called with MarkdownV2-escaped email, markNotified called with jti', async () => {
+  it('3. happy path: sendMessage called with MarkdownV2-escaped email (short CTA), markNotified called with jti', async () => {
     const email = 'user.name@example.com';
     getTokenStub.resolves(makeTokenRow(email));
     const job = makeJob();
@@ -103,9 +113,8 @@ describe('processEmailVerificationJob', () => {
     const [token, chatId, text] = sendMessageStub.firstCall.args;
     expect(token).to.equal(MANAGER_BOT_TOKEN);
     expect(chatId).to.equal(job.data.chatId);
-    // Dots in email should be escaped as \. in MarkdownV2
-    expect(text).to.include('user\\.name@example\\.com');
-    expect(text).to.include('Reply here');
+    // Exact CTA format — no trailing text
+    expect(text).to.equal('✅ Email *user\\.name@example\\.com* verified\\!');
 
     expect(markNotifiedStub.calledOnceWith(job.data.jti)).to.be.true;
   });
@@ -153,5 +162,67 @@ describe('processEmailVerificationJob', () => {
     // All special MarkdownV2 chars in the email should be escaped
     // . → \. , + → \+, @ stays as-is (not a MarkdownV2 reserved char per the regex)
     expect(text).to.include('user\\.name\\+tag@x\\.com');
+  });
+
+  // ── 7. Lock acquired → managerQueue.add called with correct args ──────────
+
+  it('7. lock acquired → managerQueue.add called with jobId, text [email_verified], messageId 0, firstName empty', async () => {
+    const job = makeJob({ jti: 'test-jti-uuid', userId: 11111111, chatId: 99887766 }); // userId ≠ chatId
+    getTokenStub.resolves(makeTokenRow());
+    const deps = makeDeps();
+
+    await processEmailVerificationJob(job, deps);
+
+    expect(acquireLockStub.calledOnce).to.be.true;
+    expect(managerQueueAddStub.calledOnce).to.be.true;
+    const [eventName, jobData, options] = managerQueueAddStub.firstCall.args;
+    expect(eventName).to.equal('manager-message');
+    expect(jobData.text).to.equal('[email_verified]');
+    expect(jobData.messageId).to.equal(0);
+    expect(jobData.firstName).to.equal('');
+    expect(options.jobId).to.equal('email-verified-test-jti-uuid');
+    // Regression guard: jobData must use userId (11111111), NOT chatId (99887766)
+    expect(jobData.userId).to.equal(11111111);
+    expect(jobData.conversationId).to.equal('manager:11111111');
+  });
+
+  // ── 8. acquireLock returns false → managerQueue.add NOT called ────────────
+
+  it('8. acquireLock returns false → managerQueue.add NOT called, resolves without error', async () => {
+    acquireLockStub.resolves(false);
+    getTokenStub.resolves(makeTokenRow());
+
+    await processEmailVerificationJob(makeJob(), makeDeps());
+
+    expect(managerQueueAddStub.called).to.be.false;
+  });
+
+  // ── 9. acquireLock true but managerQueue.add throws → releaseLock called, no rethrow ──
+
+  it('9. acquireLock true but managerQueue.add throws → releaseLock called, resolves without error', async () => {
+    acquireLockStub.resolves(true);
+    managerQueueAddStub.rejects(new Error('Queue unavailable'));
+    getTokenStub.resolves(makeTokenRow());
+
+    // Should NOT throw
+    await processEmailVerificationJob(makeJob(), makeDeps());
+
+    expect(releaseLockStub.calledOnce).to.be.true;
+  });
+
+  it('T3-01: resolves normally when managerQueue is omitted from WorkerDeps', async () => {
+    getTokenStub.resolves(makeTokenRow());
+    acquireLockStub.resolves(true);
+    // deps WITHOUT managerQueue — falls through to module-level singleton stubbed via esmock
+    const deps = {
+      telegram: { sendMessage: sendMessageStub },
+      agentService: {},
+      managerBotToken: MANAGER_BOT_TOKEN,
+      managerBotId: MANAGER_BOT_ID,
+      baseUrl: 'https://example.com',
+      botUsername: 'TestBot',
+    };
+    await processEmailVerificationJob(makeJob(), deps);
+    expect(sendMessageStub.calledOnce).to.be.true;
   });
 });

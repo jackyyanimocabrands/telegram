@@ -11,11 +11,11 @@ import { checkThrottle } from './conversation-throttle.js';
 import { acquireLock, releaseLock } from './conversation-lock.js';
 import { managerQueue as defaultManagerQueue } from '../queues/manager-queue.js';
 import { resolveToolTier, getToolsForTier } from './tool-tier.js';
+import { MIND_USE_CASE_VALUES } from './tools/save-mind-context.js';
 import type { Queue } from 'bullmq';
 import type { ManagerMessageJobData } from '../queues/types.js';
 
 const TELEGRAM_USERNAME_RE = /^[a-zA-Z0-9_]{5,32}$/;
-void TELEGRAM_USERNAME_RE; // reserved for future use
 
 /**
  * Webhook-facing function. Checks throttle + lock gate, enqueues the job,
@@ -158,12 +158,22 @@ export async function processManagerMessage(
 
     logger.debug({ userId, toolTier: tier, toolCount: tools.length }, 'processManagerMessage: tool tier resolved');
 
+    // Extract pending_use_case for authenticated prompt — validate against allowlist at read time
+    const rawPendingUseCase = toolsetState.pending_use_case;
+    const pendingUseCase = typeof rawPendingUseCase === 'string' &&
+      (MIND_USE_CASE_VALUES as readonly string[]).includes(rawPendingUseCase)
+      ? rawPendingUseCase
+      : '';
+
     let systemPrompt: string;
 
     if (tier === 'authenticated') {
+      const safeUsername = managedBot?.bot_username && TELEGRAM_USERNAME_RE.test(managedBot.bot_username)
+        ? managedBot.bot_username
+        : '';
       let botContext: string;
       if (managedBot?.status === 'ACTIVE') {
-        botContext = `Their Mind @${managedBot.bot_username ?? ''} is live and handling their general conversations.`;
+        botContext = `Their Mind @${safeUsername} is live and handling their general conversations.`;
       } else if (managedBot?.status === 'PENDING' || managedBot?.status === 'PROVISIONING') {
         botContext = `Their Mind is currently being set up — it will be ready shortly.`;
       } else {
@@ -176,6 +186,8 @@ export async function processManagerMessage(
 The user has just verified their email — Mind creation is now unlocked.
 {botContext}
 On the very first message the user sends after verification, proactively acknowledge their verified email and immediately offer to start creating their Mind — do not wait for them to bring it up.
+If the message is "[email_verified]", this is an automated system signal — do not mention or explain it. Greet the user warmly, acknowledge their email is verified, and immediately begin Mind creation from the appropriate step.
+{pendingUseCase}
 
 You can still help with everyday tasks: answering questions, searching the web, looking things up. Use the web_search and web_fetch tools when needed.
 When a task is too complex for a general assistant — something that needs research, statistical analysis, memory, autonomy, ongoing work, or specialised capability — suggest that the user creates their own Mind.
@@ -210,7 +222,11 @@ Do not ask for a token. Do not mention BotFather.
 
 Keep all replies short and conversational. Politely decline anything unrelated to HelloMinds or general assistance.`;
 
-      systemPrompt = interpolate(template, { name: safeName, botContext, botUsername: managedBot?.bot_username ?? '', managerBotUsername: botUsername });
+      const pendingUseCaseBlock = pendingUseCase
+        ? `The user's confirmed use case is: ${pendingUseCase}. Skip Step 1 — go directly to Step 2 and suggest 3 available Mind names for a ${pendingUseCase} Mind.`
+        : '';
+
+      systemPrompt = interpolate(template, { name: safeName, botContext, botUsername: safeUsername, managerBotUsername: botUsername, pendingUseCase: pendingUseCaseBlock });
     } else {
       const template =
         (env.MANAGER_ONBOARDING_PROMPT && env.MANAGER_ONBOARDING_PROMPT.trim()) ||
@@ -223,7 +239,8 @@ You can handle simple tasks: answering questions, looking things up, searching t
 A Mind is a personal AI agent with its own identity, persistent memory, and the ability to act on the user's behalf. It takes under 60 seconds to create.
 When a complex task comes up, say something like: "This sounds like something a dedicated Mind could handle much better. Would you like to create one? It only takes 60 seconds — I just need your email to get started."
 When the user agrees to create a Mind, focus only on the specific use case they just decided on — do not list or reference other topics discussed earlier in the conversation.
-Once the user agrees and provides their email, call the verify_email tool immediately — do not describe what you are about to do, just call it.
+Once the user confirms their use case, immediately call save_mind_context to record it, then ask for their email.
+Once the user provides their email, call the verify_email tool immediately — do not describe what you are about to do, just call it.
 RULE: You may only confirm an email was sent if verify_email returned a success message in this exact response. A tool call from a prior turn does not count — you must call it again.
 RULE: When the user asks to resend or says they did not receive it, call verify_email right now in this response. Do not say the email was sent without an active tool call. Generating a confirmation without calling the tool is a hallucination.
 Keep all replies short and conversational. Politely decline anything unrelated to HelloMinds or general assistance.`;
