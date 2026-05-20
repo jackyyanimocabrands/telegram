@@ -7,5 +7,10 @@
   "summarization": [
     { "provider": "deepseek", "model": "deepseek-v4-flash", "temperature": 0.3 },
     { "provider": "deepseek", "model": "deepseek-chat", "temperature": 0.3 }
-  ]
+  ],
+  "summarizationConfig": {
+    "threshold": 0.8,
+    "compression": 0.5,
+    "forceCompression": 0.75
+  }
 }

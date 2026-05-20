@@ -54,7 +54,7 @@ export interface ILlmModelFactory {
 }
 
 /** Maximum tool-call round-trips per graph invocation before forcing a stop. */
-const MAX_TOOL_CALL_ROUNDS = 5;
+export const MAX_TOOL_CALL_ROUNDS = 5;
 
 // ── State annotation ────────────────────────────────────────────────────────
 
@@ -153,7 +153,7 @@ type AgentState = typeof AgentStateAnnotation.State;
 export const SUMMARY_PREFIX = '[CONTEXT_SUMMARY_START]';
 
 /** Maximum characters of summary text injected into a SystemMessage. */
-const SUMMARY_MAX_CHARS = 2000;
+export const SUMMARY_MAX_CHARS = 2000;
 
 /**
  * Build the summary block string that gets injected into a SystemMessage.
@@ -498,7 +498,7 @@ export function agentRouter(state: AgentState): 'tools' | 'summarize' | 'save' {
  * Routes to 'summarize' if the conversation is over budget, 'save' otherwise.
  */
 export function checkBudgetRouter(state: AgentState): 'summarize' | 'save' {
-  const budget = Math.floor(getModelConfig(state.model).maxTokens * 0.8);
+  const budget = Math.floor(getModelConfig(state.model).maxTokens * llmConfig.summarizationConfig.threshold);
   const tokenInput = state.messages.map(m => {
     const type = m.getType();
     const role: 'user' | 'assistant' | 'system' =
@@ -543,7 +543,9 @@ export async function summarizeNode(
   );
 
   // Force-summarize compresses the oldest 75%; automatic compresses the oldest 50%
-  const fraction = state.forceSummarize ? 0.75 : 0.5;
+  const fraction = state.forceSummarize
+    ? llmConfig.summarizationConfig.forceCompression
+    : llmConfig.summarizationConfig.compression;
   const oldestCount = Math.floor(historyMessages.length * fraction);
   if (oldestCount === 0) {
     logger.debug('summarizeNode: not enough messages to summarize, skipping');

@@ -16,9 +16,17 @@ export const LlmSlotSchema = z.object({
 });
 export type LlmSlotConfig = z.infer<typeof LlmSlotSchema>;
 
+export const SummarizationConfigSchema = z.object({
+  threshold: z.number().gt(0).max(1).default(0.8),
+  compression: z.number().gt(0).max(1).default(0.5),
+  forceCompression: z.number().gt(0).max(1).default(0.75),
+});
+export type SummarizationConfig = z.infer<typeof SummarizationConfigSchema>;
+
 export const LlmConfigSchema = z.object({
   chat: z.array(LlmSlotSchema).min(1, 'At least one chat LLM slot is required'),
   summarization: z.array(LlmSlotSchema).min(1, 'At least one summarization LLM slot is required'),
+  summarizationConfig: SummarizationConfigSchema.optional().default({}),
 });
 export type LlmConfig = z.infer<typeof LlmConfigSchema>;
 

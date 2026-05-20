@@ -67,6 +67,7 @@ const mockLlmConfig = {
     { provider: 'openai', model: 'gpt-4o-mini', temperature: 0.3 },
     { provider: 'anthropic', model: 'claude-3-5-haiku-20241022', temperature: 0.3 },
   ],
+  summarizationConfig: { threshold: 0.8, compression: 0.5, forceCompression: 0.75 },
 };
 
 let setConversationSystemPromptStub: sinon.SinonStub;
@@ -778,6 +779,31 @@ describe('AgentService (LangGraph)', () => {
 
       // Should fall through to checkBudgetRouter → 'save' (zero messages, under budget)
       expect(agentRouter(state)).to.equal('save');
+    });
+
+    it('N2: toolCallRound >= MAX_TOOL_CALL_ROUNDS AND token budget exceeded → routes to "summarize"', async () => {
+      const agentRouter = await buildAgentRouter();
+
+      // gpt-4o: maxTokens=128000, threshold=0.8, budget=floor(128000*0.8)=102400 tokens
+      // estimateTokens = floor(totalChars/4); need totalChars > 409600
+      // Use a single AIMessage with 409604 chars → floor(409604/4)=102401 > 102400
+      const bigContent = 'x'.repeat(409604);
+      const aiMsg = new AIMessage({
+        content: bigContent,
+        tool_calls: [{ name: 'my_tool', args: {}, id: 'c3', type: 'tool_call' }],
+      });
+
+      const state = {
+        messages: [aiMsg],
+        tools: [{ name: 'my_tool' }],
+        toolCallRound: 5, // MAX_TOOL_CALL_ROUNDS = 5 → tool condition fails
+        model: 'gpt-4o',
+        forceSummarize: false,
+      };
+
+      // tool_calls present but round >= MAX → falls to checkBudgetRouter
+      // tokens (102401) > budget (102400) → 'summarize'
+      expect(agentRouter(state)).to.equal('summarize');
     });
 
     it('routes to "save" when last AI message has no tool_calls', async () => {
