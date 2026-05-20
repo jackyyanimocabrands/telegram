@@ -15,21 +15,26 @@ function makeEnv(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
-async function loadLocalePlugin() {
-  const module = await esmock('../../../../src/services/ephemeral-context/plugins/locale.js', {
-    '../../../../src/utils/logger.js': { logger: { warn: sinon.stub(), info: sinon.stub(), debug: sinon.stub(), error: sinon.stub() } },
-  });
-  return module.localePlugin as EphemeralContextPlugin;
-}
-
-const fixedDate = new Date('2024-06-15T12:30:00.000Z');
-const getNow = () => fixedDate;
-
 describe('localePlugin', () => {
+  let lastMod: any;
+
   afterEach(async () => {
+    if (lastMod) {
+      await esmock.purge(lastMod);
+      lastMod = undefined;
+    }
     sinon.restore();
-    await esmock.purge();
   });
+
+  async function loadLocalePlugin() {
+    lastMod = await esmock('../../../../src/services/ephemeral-context/plugins/locale.js', {
+      '../../../../src/utils/logger.js': { logger: { warn: sinon.stub(), info: sinon.stub(), debug: sinon.stub(), error: sinon.stub() } },
+    });
+    return lastMod.localePlugin as EphemeralContextPlugin;
+  }
+
+  const fixedDate = new Date('2024-06-15T12:30:00.000Z');
+  const getNow = () => fixedDate;
 
   // ── enabled() ─────────────────────────────────────────────────────────────
   // NOTE: The registry enforces EPHEMERAL_CONTEXT_ENABLED; plugins only check their own flag.

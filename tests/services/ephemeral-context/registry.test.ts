@@ -48,32 +48,33 @@ function makePlugin(
 // Load registry under test via esmock (to stub logger)
 // ---------------------------------------------------------------------------
 
-async function loadRegistry() {
-  const warnStub = sinon.stub();
-  const module = await esmock('../../../src/services/ephemeral-context/registry.js', {
-    '../../../src/utils/logger.js': {
-      logger: { warn: warnStub, debug: sinon.stub(), info: sinon.stub(), error: sinon.stub() },
-    },
-  });
-  return {
-    buildEphemeralContext: module.buildEphemeralContext as (
-      plugins: EphemeralContextPlugin[],
-      input: EphemeralContextInput,
-      env: any,
-    ) => Promise<SystemMessage | null>,
-    warnStub,
-  };
-}
-
-// ===========================================================================
-// Tests
-// ===========================================================================
-
 describe('buildEphemeralContext', () => {
+  let lastMod: any;
+
   afterEach(async () => {
+    if (lastMod) {
+      await esmock.purge(lastMod);
+      lastMod = undefined;
+    }
     sinon.restore();
-    await esmock.purge();
   });
+
+  async function loadRegistry() {
+    const warnStub = sinon.stub();
+    lastMod = await esmock('../../../src/services/ephemeral-context/registry.js', {
+      '../../../src/utils/logger.js': {
+        logger: { warn: warnStub, debug: sinon.stub(), info: sinon.stub(), error: sinon.stub() },
+      },
+    });
+    return {
+      buildEphemeralContext: lastMod.buildEphemeralContext as (
+        plugins: EphemeralContextPlugin[],
+        input: EphemeralContextInput,
+        env: any,
+      ) => Promise<SystemMessage | null>,
+      warnStub,
+    };
+  }
 
   it('returns null when EPHEMERAL_CONTEXT_ENABLED is false', async () => {
     const { buildEphemeralContext } = await loadRegistry();

@@ -8,15 +8,16 @@ import request from 'supertest';
 describe('webhook routes', () => {
   let dispatchStub: sinon.SinonStub;
   let app: express.Express;
+  let mod: any;
 
   const setupApp = async () => {
-    const { createWebhookRouter } = await esmock('../../src/routes/webhook.ts', {});
+    mod = await esmock('../../src/routes/webhook.ts', {});
 
     dispatchStub = sinon.stub().resolves();
     const mockRegistry = { dispatch: dispatchStub };
     const a = express();
     a.use(express.json());
-    a.use('/webhook', createWebhookRouter(mockRegistry as any));
+    a.use('/webhook', mod.createWebhookRouter(mockRegistry as any));
     a.use((err: any, _req: any, res: any, _next: any) => {
       res.status(err.statusCode ?? err.status ?? 500).json({ error: err.message });
     });
@@ -28,8 +29,8 @@ describe('webhook routes', () => {
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   describe('POST /webhook/telegram (manager)', () => {

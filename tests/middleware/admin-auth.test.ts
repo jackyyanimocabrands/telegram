@@ -19,21 +19,22 @@ function makeRes() {
 describe('adminAuth middleware', () => {
   let next: sinon.SinonStub;
   let adminAuth: any;
+  let mod: any;
 
   beforeEach(async () => {
     next = sinon.stub();
 
-    const module = await esmock('../../src/middleware/admin-auth.ts', {
+    mod = await esmock('../../src/middleware/admin-auth.ts', {
       '../../src/config/env.js': {
         env: { ADMIN_API_KEY: TEST_ADMIN_KEY },
       },
     });
-    adminAuth = module.adminAuth;
+    adminAuth = mod.adminAuth;
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   it('returns 401 when Authorization header is missing', () => {

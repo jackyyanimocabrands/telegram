@@ -15,13 +15,14 @@ describe('email-verification service', () => {
   let sendStub: sinon.SinonStub;
   let sesClientStub: { send: sinon.SinonStub };
   let insertTokenStub: sinon.SinonStub;
+  let mod: any;
 
   beforeEach(async () => {
     sendStub = sinon.stub().resolves({ MessageId: 'test-message-id' });
     sesClientStub = { send: sendStub };
     insertTokenStub = sinon.stub().resolves();
 
-    const mod = await esmock('../../src/services/email-verification.ts', {
+    mod = await esmock('../../src/services/email-verification.ts', {
       '@aws-sdk/client-ses': {
         SESClient: class {
           send(cmd: unknown) { return sesClientStub.send(cmd); }
@@ -41,8 +42,8 @@ describe('email-verification service', () => {
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   // ── signVerificationToken ────────────────────────────────────────────────
@@ -179,7 +180,7 @@ describe('email-verification service', () => {
     });
 
     it('throws when SES_FROM_ADDRESS is absent', async () => {
-      const mod = await esmock('../../src/services/email-verification.ts', {
+      const inlineMod = await esmock('../../src/services/email-verification.ts', {
         '@aws-sdk/client-ses': {
           SESClient: class {
             send(cmd: unknown) { return sesClientStub.send(cmd); }
@@ -197,11 +198,12 @@ describe('email-verification service', () => {
       });
       let threw = false;
       try {
-        await mod.sendVerificationEmail('x@x.com', 'b', 'u');
+        await inlineMod.sendVerificationEmail('x@x.com', 'b', 'u');
       } catch (err) {
         threw = true;
         expect((err as Error).message).to.match(/SES_FROM_ADDRESS/);
       }
+      await esmock.purge(inlineMod);
       expect(threw).to.be.true;
     });
   });

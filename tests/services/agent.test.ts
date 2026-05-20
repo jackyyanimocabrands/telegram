@@ -72,21 +72,23 @@ const mockLlmConfig = {
 
 let setConversationSystemPromptStub: sinon.SinonStub;
 
+let lastAgentMod: any;
+
 async function buildAgentService() {
   setConversationSystemPromptStub = sinon.stub().resolves();
 
-  const module = await esmock('../../src/services/agent.ts', {
+  lastAgentMod = await esmock('../../src/services/agent.ts', {
     '../../src/config/llm-config.js': { llmConfig: mockLlmConfig },
     '../../src/db/queries/conversations.js': {
       setConversationSystemPrompt: setConversationSystemPromptStub,
       clearConversation: sinon.stub().resolves(),
     },
   });
-  return module.AgentService;
+  return lastAgentMod.AgentService;
 }
 
 async function buildAgentNodes() {
-  const module = await esmock('../../src/services/agent.ts', {
+  lastAgentMod = await esmock('../../src/services/agent.ts', {
     '../../src/config/llm-config.js': { llmConfig: mockLlmConfig },
     '../../src/db/queries/conversations.js': {
       setConversationSystemPrompt: sinon.stub().resolves(),
@@ -94,9 +96,9 @@ async function buildAgentNodes() {
     },
   });
   return {
-    checkBudgetRouter: module.checkBudgetRouter as (state: Record<string, unknown>) => string,
-    loadHistoryNode: module.loadHistoryNode as (state: Record<string, unknown>, services: Record<string, unknown>) => Promise<Record<string, unknown>>,
-    summarizeNode: module.summarizeNode as (state: Record<string, unknown>, services: Record<string, unknown>) => Promise<Record<string, unknown>>,
+    checkBudgetRouter: lastAgentMod.checkBudgetRouter as (state: Record<string, unknown>) => string,
+    loadHistoryNode: lastAgentMod.loadHistoryNode as (state: Record<string, unknown>, services: Record<string, unknown>) => Promise<Record<string, unknown>>,
+    summarizeNode: lastAgentMod.summarizeNode as (state: Record<string, unknown>, services: Record<string, unknown>) => Promise<Record<string, unknown>>,
   };
 }
 
@@ -106,8 +108,11 @@ async function buildAgentNodes() {
 
 describe('AgentService (LangGraph)', () => {
   afterEach(async () => {
+    if (lastAgentMod) {
+      await esmock.purge(lastAgentMod);
+      lastAgentMod = undefined;
+    }
     sinon.restore();
-    await esmock.purge();
   });
 
   // ── chat() ────────────────────────────────────────────────────────────────
@@ -586,14 +591,14 @@ describe('AgentService (LangGraph)', () => {
 
   describe('toolNode (unit)', () => {
     async function buildToolNode() {
-      const module = await esmock('../../src/services/agent.ts', {
+      lastAgentMod = await esmock('../../src/services/agent.ts', {
         '../../src/config/llm-config.js': { llmConfig: mockLlmConfig },
         '../../src/db/queries/conversations.js': {
           setConversationSystemPrompt: sinon.stub().resolves(),
           clearConversation: sinon.stub().resolves(),
         },
       });
-      return module.toolNode as (state: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      return lastAgentMod.toolNode as (state: Record<string, unknown>) => Promise<Record<string, unknown>>;
     }
 
     it('returns {} when last message is not an AI message', async () => {
@@ -732,14 +737,14 @@ describe('AgentService (LangGraph)', () => {
 
   describe('agentRouter (unit)', () => {
     async function buildAgentRouter() {
-      const module = await esmock('../../src/services/agent.ts', {
+      lastAgentMod = await esmock('../../src/services/agent.ts', {
         '../../src/config/llm-config.js': { llmConfig: mockLlmConfig },
         '../../src/db/queries/conversations.js': {
           setConversationSystemPrompt: sinon.stub().resolves(),
           clearConversation: sinon.stub().resolves(),
         },
       });
-      return module.agentRouter as (state: Record<string, unknown>) => string;
+      return lastAgentMod.agentRouter as (state: Record<string, unknown>) => string;
     }
 
     it('routes to "tools" when last AI message has tool_calls and round is within limit', async () => {

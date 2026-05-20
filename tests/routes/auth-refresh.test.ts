@@ -28,11 +28,12 @@ const TEST_USER_ROW = {
 describe('POST /api/auth/refresh', () => {
   let app: express.Express;
   let findUserByIdStub: sinon.SinonStub;
+  let mod: any;
 
   beforeEach(async () => {
     findUserByIdStub = sinon.stub().resolves(TEST_USER_ROW);
 
-    const module = await esmock('../../src/routes/auth.ts', {
+    mod = await esmock('../../src/routes/auth.ts', {
       '../../src/db/queries/users.js': {
         upsertUser: sinon.stub(),
         findUserById: findUserByIdStub,
@@ -41,7 +42,7 @@ describe('POST /api/auth/refresh', () => {
 
     app = express();
     app.use(express.json());
-    app.use('/api/auth', module.authRouter);
+    app.use('/api/auth', mod.authRouter);
     // Minimal error handler matching the real one's shape
     app.use((err: any, _req: any, res: any, _next: any) => {
       res.status(err.statusCode ?? err.status ?? 500).json({
@@ -53,8 +54,8 @@ describe('POST /api/auth/refresh', () => {
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   it('returns 200 with a new access token for a valid refresh token', async () => {

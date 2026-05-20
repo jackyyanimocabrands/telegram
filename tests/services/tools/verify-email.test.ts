@@ -7,12 +7,13 @@ describe('createVerifyEmailTool', () => {
   let createVerifyEmailTool: any;
   let sendVerificationEmailStub: sinon.SinonStub;
   let loggerErrorStub: sinon.SinonStub;
+  let mod: any;
 
   beforeEach(async () => {
     sendVerificationEmailStub = sinon.stub();
     loggerErrorStub = sinon.stub();
 
-    const mod = await esmock('../../../src/services/tools/verify-email.ts', {
+    mod = await esmock('../../../src/services/tools/verify-email.ts', {
       '../../../src/services/email-verification.js': {
         sendVerificationEmail: sendVerificationEmailStub,
       },
@@ -27,8 +28,8 @@ describe('createVerifyEmailTool', () => {
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   // T1: success path

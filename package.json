@@ -27,7 +27,8 @@
     "set-webhook": "tsx scripts/set-webhook.ts",
     "set-commands": "tsx scripts/set-commands.ts",
     "verify-manager": "tsx scripts/verify-manager.ts",
-    "generate-api-key": "tsx scripts/generate-api-key.ts"
+    "generate-api-key": "tsx scripts/generate-api-key.ts",
+    "dry-run-summarization": "tsx scripts/dry-run-summarization.ts"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.1046.0",

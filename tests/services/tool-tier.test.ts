@@ -34,9 +34,10 @@ let createVerifyEmailToolStub: sinon.SinonStub;
 let createClearEmailVerificationToolStub: sinon.SinonStub;
 let createCheckBotUsernameToolStub: sinon.SinonStub;
 let createSaveMindContextToolStub: sinon.SinonStub;
+let lastMod: any;
 
 async function buildModule() {
-  return esmock('../../src/services/tool-tier.ts', {
+  lastMod = await esmock('../../src/services/tool-tier.ts', {
     '../../src/services/tools/index.js': {
       createCreateBotTool: createCreateBotToolStub,
       createConfigureBotTool: createConfigureBotToolStub,
@@ -48,6 +49,7 @@ async function buildModule() {
       createSaveMindContextTool: createSaveMindContextToolStub,
     },
   });
+  return lastMod;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -65,8 +67,11 @@ describe('tool-tier', () => {
   });
 
   afterEach(async () => {
+    if (lastMod) {
+      await esmock.purge(lastMod);
+      lastMod = undefined;
+    }
     sinon.restore();
-    await esmock.purge();
   });
 
   // ── resolveToolTier ───────────────────────────────────────────────────────

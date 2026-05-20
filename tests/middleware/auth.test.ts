@@ -16,23 +16,24 @@ describe('auth middleware', () => {
   let requireAuth: any;
   let optionalAuth: any;
   let verifyStub: sinon.SinonStub;
+  let mod: any;
 
   beforeEach(async () => {
     next = sinon.stub();
     verifyStub = sinon.stub();
 
-    const module = await esmock('../../src/middleware/auth.ts', {
+    mod = await esmock('../../src/middleware/auth.ts', {
       '../../src/services/session.js': {
         verifyAccessToken: verifyStub,
       },
     });
-    requireAuth = module.requireAuth;
-    optionalAuth = module.optionalAuth;
+    requireAuth = mod.requireAuth;
+    optionalAuth = mod.optionalAuth;
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   describe('requireAuth', () => {

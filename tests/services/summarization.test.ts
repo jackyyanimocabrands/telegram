@@ -44,13 +44,14 @@ describe('SummarizationService', () => {
   // Stubs for model-registry and token-estimator injected via esmock
   let getModelConfigStub: sinon.SinonStub;
   let estimateTokensStub: sinon.SinonStub;
+  let mod: any;
 
   beforeEach(async () => {
     updateConversationMessagesStub = sinon.stub().resolves();
     getModelConfigStub = sinon.stub().returns({ maxTokens: 128000 });
     estimateTokensStub = sinon.stub();
 
-    const module = await esmock('../../src/services/summarization.ts', {
+    mod = await esmock('../../src/services/summarization.ts', {
       '../../src/db/queries/conversations.js': {
         updateConversationMessages: updateConversationMessagesStub,
       },
@@ -61,12 +62,12 @@ describe('SummarizationService', () => {
         estimateTokens: estimateTokensStub,
       },
     });
-    SummarizationService = module.SummarizationService;
+    SummarizationService = mod.SummarizationService;
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.resetHistory();
-    await esmock.purge();
   });
 
   describe('maybeSummarize()', () => {
@@ -179,7 +180,7 @@ describe('SummarizationService', () => {
       const localGetModelConfigStub = sinon.stub().returns({ maxTokens: 128000 });
       const localEstimateTokensStub = sinon.stub().returns(99999); // over budget
 
-      const { SummarizationService: SvcWithLogger } = await esmock(
+      const inlineMod = await esmock(
         '../../src/services/summarization.ts',
         {
           '../../src/db/queries/conversations.js': {
@@ -196,6 +197,7 @@ describe('SummarizationService', () => {
           },
         },
       );
+      const { SummarizationService: SvcWithLogger } = inlineMod;
 
       const providerStub = { invoke: sinon.stub().rejects(new Error('LLM blew up')) };
       const factoryStub = { create: sinon.stub().returns(providerStub) };
@@ -209,6 +211,8 @@ describe('SummarizationService', () => {
 
       const svc = new SvcWithLogger(factoryStub);
       await svc.maybeSummarize('bot-1', 42, row, [], row.messages);
+
+      await esmock.purge(inlineMod);
 
       // Must not rethrow
       // Must call logger.error exactly once to record the failure

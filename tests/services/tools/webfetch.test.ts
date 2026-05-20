@@ -20,14 +20,18 @@ const BASE_ENV = {
 
 describe('createWebfetchTool', () => {
   let fetchStub: sinon.SinonStub;
+  let lastMod: any;
 
   beforeEach(() => {
     fetchStub = sinon.stub(globalThis, 'fetch' as any);
   });
 
   afterEach(async () => {
+    if (lastMod) {
+      await esmock.purge(lastMod);
+      lastMod = undefined;
+    }
     sinon.restore();
-    await esmock.purge();
   });
 
   it('returns stripped text on successful fetch', async () => {
@@ -37,13 +41,13 @@ describe('createWebfetchTool', () => {
       text: sinon.stub().resolves('<html><body><h1>Hello World</h1><p>Some   content.</p></body></html>'),
     });
 
-    const { createWebfetchTool } = await esmock('../../../src/services/tools/webfetch.ts', {
+    lastMod = await esmock('../../../src/services/tools/webfetch.ts', {
       '../../../src/config/env.js': { env: { ...BASE_ENV } },
       '../../../src/services/redis.js': { getRedisClient: () => fakeRedis },
       'dns': { promises: { lookup: sinon.stub().resolves({ address: '1.2.3.4', family: 4 }) } },
     });
 
-    const tool = createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
+    const tool = lastMod.createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
     const result = await tool.invoke({ url: 'https://example.com/page' });
 
     expect(result).to.include('Hello World');
@@ -55,13 +59,13 @@ describe('createWebfetchTool', () => {
   it('returns rate limit message when count exceeds WEBFETCH_RATE_LIMIT_MAX', async () => {
     const fakeRedis = makeFakeRedis(11); // count > 10 (default max)
 
-    const { createWebfetchTool } = await esmock('../../../src/services/tools/webfetch.ts', {
+    lastMod = await esmock('../../../src/services/tools/webfetch.ts', {
       '../../../src/config/env.js': { env: { ...BASE_ENV } },
       '../../../src/services/redis.js': { getRedisClient: () => fakeRedis },
       'dns': { promises: { lookup: sinon.stub().resolves({ address: '1.2.3.4', family: 4 }) } },
     });
 
-    const tool = createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
+    const tool = lastMod.createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
     const result = await tool.invoke({ url: 'https://example.com/page' });
     expect(result).to.equal('Rate limit exceeded. Try again later.');
     expect(fetchStub.called).to.be.false;
@@ -70,13 +74,13 @@ describe('createWebfetchTool', () => {
   it('returns domain not allowed when allowlist is set and domain is not in it', async () => {
     const fakeRedis = makeFakeRedis(1);
 
-    const { createWebfetchTool } = await esmock('../../../src/services/tools/webfetch.ts', {
+    lastMod = await esmock('../../../src/services/tools/webfetch.ts', {
       '../../../src/config/env.js': { env: { ...BASE_ENV, WEBFETCH_DOMAIN_ALLOWLIST: 'allowed.com,other.com' } },
       '../../../src/services/redis.js': { getRedisClient: () => fakeRedis },
       'dns': { promises: { lookup: sinon.stub().resolves({ address: '1.2.3.4', family: 4 }) } },
     });
 
-    const tool = createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
+    const tool = lastMod.createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
     const result = await tool.invoke({ url: 'https://notallowed.com/page' });
     expect(result).to.equal('Domain not allowed.');
     expect(fetchStub.called).to.be.false;
@@ -89,13 +93,13 @@ describe('createWebfetchTool', () => {
       text: sinon.stub().resolves('plain content'),
     });
 
-    const { createWebfetchTool } = await esmock('../../../src/services/tools/webfetch.ts', {
+    lastMod = await esmock('../../../src/services/tools/webfetch.ts', {
       '../../../src/config/env.js': { env: { ...BASE_ENV, WEBFETCH_DOMAIN_ALLOWLIST: '' } },
       '../../../src/services/redis.js': { getRedisClient: () => fakeRedis },
       'dns': { promises: { lookup: sinon.stub().resolves({ address: '1.2.3.4', family: 4 }) } },
     });
 
-    const tool = createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
+    const tool = lastMod.createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
     const result = await tool.invoke({ url: 'https://anydomain.com/page' });
     expect(result).to.equal('plain content');
   });
@@ -105,13 +109,13 @@ describe('createWebfetchTool', () => {
   it('SSRF — blocks AWS IMDS link-local IP (169.254.x.x)', async () => {
     const fakeRedis = makeFakeRedis(1);
 
-    const { createWebfetchTool } = await esmock('../../../src/services/tools/webfetch.ts', {
+    lastMod = await esmock('../../../src/services/tools/webfetch.ts', {
       '../../../src/config/env.js': { env: { ...BASE_ENV } },
       '../../../src/services/redis.js': { getRedisClient: () => fakeRedis },
       'dns': { promises: { lookup: sinon.stub().resolves({ address: '169.254.169.254', family: 4 }) } },
     });
 
-    const tool = createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
+    const tool = lastMod.createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
     const result = await tool.invoke({ url: 'http://169.254.169.254/latest/meta-data/' });
     expect(result).to.equal('URL not allowed: private or reserved address.');
     expect(fetchStub.called).to.be.false;
@@ -120,13 +124,13 @@ describe('createWebfetchTool', () => {
   it('SSRF — blocks localhost by name', async () => {
     const fakeRedis = makeFakeRedis(1);
 
-    const { createWebfetchTool } = await esmock('../../../src/services/tools/webfetch.ts', {
+    lastMod = await esmock('../../../src/services/tools/webfetch.ts', {
       '../../../src/config/env.js': { env: { ...BASE_ENV } },
       '../../../src/services/redis.js': { getRedisClient: () => fakeRedis },
       'dns': { promises: { lookup: sinon.stub().resolves({ address: '127.0.0.1', family: 4 }) } },
     });
 
-    const tool = createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
+    const tool = lastMod.createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
     const result = await tool.invoke({ url: 'http://localhost/admin' });
     expect(result).to.equal('URL not allowed: private or reserved address.');
     expect(fetchStub.called).to.be.false;
@@ -135,13 +139,13 @@ describe('createWebfetchTool', () => {
   it('SSRF — blocks RFC-1918 private address (10.x.x.x)', async () => {
     const fakeRedis = makeFakeRedis(1);
 
-    const { createWebfetchTool } = await esmock('../../../src/services/tools/webfetch.ts', {
+    lastMod = await esmock('../../../src/services/tools/webfetch.ts', {
       '../../../src/config/env.js': { env: { ...BASE_ENV } },
       '../../../src/services/redis.js': { getRedisClient: () => fakeRedis },
       'dns': { promises: { lookup: sinon.stub().resolves({ address: '10.0.0.1', family: 4 }) } },
     });
 
-    const tool = createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
+    const tool = lastMod.createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
     const result = await tool.invoke({ url: 'http://internal.example.com/secret' });
     expect(result).to.equal('URL not allowed: private or reserved address.');
     expect(fetchStub.called).to.be.false;
@@ -150,13 +154,13 @@ describe('createWebfetchTool', () => {
   it('SSRF — returns error when hostname cannot be resolved', async () => {
     const fakeRedis = makeFakeRedis(1);
 
-    const { createWebfetchTool } = await esmock('../../../src/services/tools/webfetch.ts', {
+    lastMod = await esmock('../../../src/services/tools/webfetch.ts', {
       '../../../src/config/env.js': { env: { ...BASE_ENV } },
       '../../../src/services/redis.js': { getRedisClient: () => fakeRedis },
       'dns': { promises: { lookup: sinon.stub().rejects(new Error('ENOTFOUND')) } },
     });
 
-    const tool = createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
+    const tool = lastMod.createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
     const result = await tool.invoke({ url: 'https://unresolvable.invalid/page' });
     expect(result).to.equal('URL not allowed: hostname could not be resolved.');
     expect(fetchStub.called).to.be.false;
@@ -166,13 +170,13 @@ describe('createWebfetchTool', () => {
     const fakeRedis = makeFakeRedis(1);
     fetchStub.resolves({ ok: false, status: 404, text: async () => 'Not Found' });
 
-    const { createWebfetchTool } = await esmock('../../../src/services/tools/webfetch.ts', {
+    lastMod = await esmock('../../../src/services/tools/webfetch.ts', {
       '../../../src/config/env.js': { env: { ...BASE_ENV } },
       '../../../src/services/redis.js': { getRedisClient: () => fakeRedis },
       'dns': { promises: { lookup: sinon.stub().resolves({ address: '1.2.3.4', family: 4 }) } },
     });
 
-    const tool = createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
+    const tool = lastMod.createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
     const result = await tool.invoke({ url: 'https://example.com/missing' });
     expect(result).to.equal('Fetch failed: HTTP 404');
   });
@@ -182,13 +186,13 @@ describe('createWebfetchTool', () => {
     const timeoutErr = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
     fetchStub.rejects(timeoutErr);
 
-    const { createWebfetchTool } = await esmock('../../../src/services/tools/webfetch.ts', {
+    lastMod = await esmock('../../../src/services/tools/webfetch.ts', {
       '../../../src/config/env.js': { env: { ...BASE_ENV } },
       '../../../src/services/redis.js': { getRedisClient: () => fakeRedis },
       'dns': { promises: { lookup: sinon.stub().resolves({ address: '1.2.3.4', family: 4 }) } },
     });
 
-    const tool = createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
+    const tool = lastMod.createWebfetchTool({ redisClient: fakeRedis, botId: 'bot-1', userId: 'user-1' });
     const result = await tool.invoke({ url: 'https://example.com/slow' });
     expect(result).to.be.a('string');
     expect(result.length).to.be.greaterThan(0);

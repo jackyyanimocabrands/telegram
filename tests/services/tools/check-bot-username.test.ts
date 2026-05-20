@@ -5,19 +5,23 @@ import esmock from 'esmock';
 
 describe('createCheckBotUsernameTool', () => {
   let createCheckBotUsernameTool: (botId?: string, userId?: string) => ReturnType<typeof import('../../../src/services/tools/check-bot-username.js')['createCheckBotUsernameTool']>;
+  let lastMod: any;
 
   afterEach(async () => {
+    if (lastMod) {
+      await esmock.purge(lastMod);
+      lastMod = undefined;
+    }
     sinon.restore();
-    await esmock.purge();
   });
 
   async function buildModule() {
-    const mod = await esmock('../../../src/services/tools/check-bot-username.ts', {
+    lastMod = await esmock('../../../src/services/tools/check-bot-username.ts', {
       '../../../src/utils/logger.js': {
         logger: { debug: sinon.stub(), info: sinon.stub(), warn: sinon.stub(), error: sinon.stub() },
       },
     });
-    createCheckBotUsernameTool = mod.createCheckBotUsernameTool;
+    createCheckBotUsernameTool = lastMod.createCheckBotUsernameTool;
   }
 
   it('tool name is "check_bot_username"', async () => {

@@ -21,6 +21,7 @@ describe('auth routes', () => {
   let authRouter: any;
   let upsertUserStub: sinon.SinonStub;
   let app: express.Express;
+  let mod: any;
 
   beforeEach(async () => {
     upsertUserStub = sinon.stub().resolves({
@@ -34,10 +35,10 @@ describe('auth routes', () => {
       updated_at: new Date(),
     });
 
-    const module = await esmock('../../src/routes/auth.ts', {
+    mod = await esmock('../../src/routes/auth.ts', {
       '../../src/db/queries/users.js': { upsertUser: upsertUserStub },
     });
-    authRouter = module.authRouter;
+    authRouter = mod.authRouter;
 
     app = express();
     app.use(express.json());
@@ -49,8 +50,8 @@ describe('auth routes', () => {
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   describe('GET /api/auth/config', () => {

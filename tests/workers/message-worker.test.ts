@@ -11,6 +11,7 @@ describe('processEmailVerificationJob', () => {
   let acquireLockStub: sinon.SinonStub;
   let releaseLockStub: sinon.SinonStub;
   let managerQueueAddStub: sinon.SinonStub;
+  let mod: any;
 
   const MANAGER_BOT_ID = 'manager-bot-123';
   const MANAGER_BOT_TOKEN = 'manager-token-abc';
@@ -61,7 +62,7 @@ describe('processEmailVerificationJob', () => {
     releaseLockStub = sinon.stub().resolves();
     managerQueueAddStub = sinon.stub().resolves({ id: 'synthetic-job-1' });
 
-    const mod = await esmock('../../src/workers/message-worker.ts', {
+    mod = await esmock('../../src/workers/message-worker.ts', {
       '../../src/db/queries/email-verification-tokens.js': {
         getToken: getTokenStub,
         markNotified: markNotifiedStub,
@@ -85,8 +86,8 @@ describe('processEmailVerificationJob', () => {
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   // ── 1. getToken returns null → returns early ──────────────────────────────

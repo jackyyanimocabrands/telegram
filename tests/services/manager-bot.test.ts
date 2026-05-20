@@ -18,6 +18,7 @@ describe('handleManagerBotMessage', () => {
   let acquireLockStub: sinon.SinonStub;
   let releaseLockStub: sinon.SinonStub;
   let queueAddStub: sinon.SinonStub;
+  let mod: any;
 
   const MANAGER_TOKEN = 'manager-token-abc';
   const MANAGER_BOT_ID = 'manager';
@@ -83,12 +84,13 @@ describe('handleManagerBotMessage', () => {
         managerQueue: { add: queueAddStub },
       },
     });
+    mod = module;
     handleManagerBotMessage = module.handleManagerBotMessage;
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   it('ignores message when from is missing', async () => {
@@ -145,7 +147,7 @@ describe('handleManagerBotMessage', () => {
 
   it('routes to management prompt when tier is authenticated and bot status is ACTIVE', async () => {
     // Re-register module with authenticated tier to test management prompt routing
-    await esmock.purge();
+    await esmock.purge(mod);
     const authenticatedModule = await esmock('../../src/services/manager-bot.ts', {
       '../../src/db/queries/managed-bots.js': {
         findManagedBotByOwner: sinon.stub().resolves({ status: 'ACTIVE', bot_username: 'alicebot' }),
@@ -183,6 +185,9 @@ describe('handleManagerBotMessage', () => {
     expect(systemPrompt).to.include('proactively acknowledge');
     expect(systemPrompt).to.include('@alicebot');
     expect(systemPrompt).not.to.include('get started');
+
+    await esmock.purge(authenticatedModule);
+    mod = undefined;
   });
 
   it('sends LLM reply to user via telegram.sendMessage', async () => {
@@ -391,6 +396,7 @@ describe('handleManagerBotMessage', () => {
     let findManagedBotByOwnerEnvStub: sinon.SinonStub;
     let agentEnvStub: { chat: sinon.SinonStub; chatStream: sinon.SinonStub };
     let mockTelegramEnv: MockTelegramClient;
+    let lastEnvMod: any;
 
     beforeEach(async () => {
       mockTelegramEnv = new MockTelegramClient();
@@ -401,14 +407,17 @@ describe('handleManagerBotMessage', () => {
     });
 
     afterEach(async () => {
+      if (lastEnvMod) {
+        await esmock.purge(lastEnvMod);
+        lastEnvMod = undefined;
+      }
       sinon.restore();
-      await esmock.purge();
     });
 
     it('uses MANAGER_ONBOARDING_PROMPT template and interpolates {name}', async () => {
       findManagedBotByOwnerEnvStub.resolves(null);
 
-      const mod = await esmock('../../src/services/manager-bot.ts', {
+      lastEnvMod = await esmock('../../src/services/manager-bot.ts', {
         '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerEnvStub },
         '../../src/config/env.js': {
           env: { MANAGER_ONBOARDING_PROMPT: 'Custom onboarding for {name}. Ask what you can help with.' },
@@ -427,7 +436,7 @@ describe('handleManagerBotMessage', () => {
         text: 'hi',
       };
 
-      await mod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
+      await lastEnvMod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
 
       const systemPrompt: string = agentEnvStub.chatStream.firstCall.args[3];
       expect(systemPrompt).to.include('Custom onboarding');
@@ -438,7 +447,7 @@ describe('handleManagerBotMessage', () => {
     it('uses MANAGER_SETTINGS_PROMPT template and interpolates {name} and {botUsername}', async () => {
       findManagedBotByOwnerEnvStub.resolves({ status: 'ACTIVE', bot_username: 'alicebot' });
 
-      const mod = await esmock('../../src/services/manager-bot.ts', {
+      lastEnvMod = await esmock('../../src/services/manager-bot.ts', {
         '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerEnvStub },
         '../../src/db/queries/conversations.js': {
           getToolsetState: sinon.stub().resolves({ email: 'alice@example.com', email_verified: true }),
@@ -464,7 +473,7 @@ describe('handleManagerBotMessage', () => {
         text: 'hi',
       };
 
-      await mod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
+      await lastEnvMod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
 
       const systemPrompt: string = agentEnvStub.chatStream.firstCall.args[3];
       expect(systemPrompt).to.equal('Welcome Alice. Your bot is @alicebot.');
@@ -473,7 +482,7 @@ describe('handleManagerBotMessage', () => {
     it('falls back to default onboarding prompt when MANAGER_ONBOARDING_PROMPT is absent', async () => {
       findManagedBotByOwnerEnvStub.resolves(null);
 
-      const mod = await esmock('../../src/services/manager-bot.ts', {
+      lastEnvMod = await esmock('../../src/services/manager-bot.ts', {
         '../../src/db/queries/managed-bots.js': { findManagedBotByOwner: findManagedBotByOwnerEnvStub },
         '../../src/config/env.js': { env: {} },
         '../../src/utils/interpolate.js': { interpolate: (t: string, v: Record<string, string>) => t.replace(/\{([^}]+)\}/g, (m: string, k: string) => v[k] ?? m) },
@@ -490,7 +499,7 @@ describe('handleManagerBotMessage', () => {
         text: 'hi',
       };
 
-      await mod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
+      await lastEnvMod.handleManagerBotMessage(msg, mockTelegramEnv, agentEnvStub, 'token', 'manager', 'https://x.com', 'mybot');
 
       const systemPrompt: string = agentEnvStub.chatStream.firstCall.args[3];
       expect(systemPrompt).to.include('general assistant for HelloMinds');
@@ -507,6 +516,7 @@ describe('enqueueManagerMessage', () => {
   let releaseLockStub: sinon.SinonStub;
   let checkThrottleStub: sinon.SinonStub;
   let queueAddStub: sinon.SinonStub;
+  let mod: any;
 
   const MANAGER_TOKEN = 'manager-token-abc';
   const BOT_USERNAME = 'hellominds_bot';
@@ -534,12 +544,13 @@ describe('enqueueManagerMessage', () => {
       '../../src/services/conversation-lock.js': { acquireLock: acquireLockStub, releaseLock: releaseLockStub },
       '../../src/queues/manager-queue.js': { managerQueue: { add: queueAddStub } },
     });
+    mod = module;
     enqueueManagerMessage = module.enqueueManagerMessage;
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   it('enqueues job when lock is acquired', async () => {
@@ -638,7 +649,7 @@ describe('enqueueManagerMessage', () => {
 
   it('/start when throttled → sends wait reply, skips lock and queue; sendMessage called once', async () => {
     // Use a fresh esmock so checkThrottle returns throttled for the command throttle key
-    await esmock.purge();
+    await esmock.purge(mod);
     const throttledCheckThrottle = sinon.stub().resolves({ allowed: false, retryAfterMs: 3000 });
     const throttledQueueAdd = sinon.stub().resolves({ id: 'no-job' });
     const throttledAcquireLock = sinon.stub().resolves(true);
@@ -649,6 +660,7 @@ describe('enqueueManagerMessage', () => {
       '../../src/services/conversation-lock.js': { acquireLock: throttledAcquireLock, releaseLock: throttledReleaseLock },
       '../../src/queues/manager-queue.js': { managerQueue: { add: throttledQueueAdd } },
     });
+    mod = throttledModule;
     const message = makeMessage({ text: '/start' });
     await throttledModule.enqueueManagerMessage(message, mockTelegram, MANAGER_TOKEN, BOT_USERNAME);
     // Throttle reply is sent (not the welcome message)
@@ -668,6 +680,7 @@ describe('processManagerMessage', () => {
     chatStream: sinon.SinonStub;
   };
   let findManagedBotByOwnerStub: sinon.SinonStub;
+  let mod: any;
 
   const MANAGER_TOKEN = 'manager-token-abc';
   const MANAGER_BOT_ID = 'manager';
@@ -706,12 +719,13 @@ describe('processManagerMessage', () => {
       '../../src/services/conversation-lock.js': { acquireLock: sinon.stub().resolves(true), releaseLock: sinon.stub().resolves() },
       '../../src/queues/manager-queue.js': { managerQueue: { add: sinon.stub().resolves({ id: 'j1' }) } },
     });
+    mod = module;
     processManagerMessage = module.processManagerMessage;
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   it('routes to onboarding system prompt when no bot', async () => {
@@ -727,7 +741,7 @@ describe('processManagerMessage', () => {
     async function* authStream() { yield 'AI reply'; }
     const authAgent = { chatStream: sinon.stub().returns(authStream()) };
 
-    const mod = await esmock('../../src/services/manager-bot.ts', {
+    const authMod = await esmock('../../src/services/manager-bot.ts', {
       '../../src/db/queries/managed-bots.js': {
         findManagedBotByOwner: sinon.stub().resolves({ status: 'ACTIVE', bot_username: 'alicebot' }),
       },
@@ -744,10 +758,13 @@ describe('processManagerMessage', () => {
     });
 
     const jobData = makeJobData();
-    await mod.processManagerMessage(jobData, mockTelegram, authAgent, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
+    await authMod.processManagerMessage(jobData, mockTelegram, authAgent, MANAGER_TOKEN, MANAGER_BOT_ID, BASE_URL, BOT_USERNAME);
     const systemPrompt: string = authAgent.chatStream.firstCall.args[3];
     expect(systemPrompt).to.include('verified');
     expect(systemPrompt).to.include('@alicebot');
+
+    await esmock.purge(authMod);
+    mod = undefined;
   });
 
   it('calls agentService.chatStream and sends reply', async () => {

@@ -7,11 +7,12 @@ describe('createCreateBotTool', () => {
   let createCreateBotTool: any;
   let mockClient: { createBot: sinon.SinonStub };
   let loggerErrorStub: sinon.SinonStub;
+  let mod: any;
 
   beforeEach(async () => {
     mockClient = { createBot: sinon.stub() };
     loggerErrorStub = sinon.stub();
-    const module = await esmock('../../../src/services/tools/create-bot.ts', {
+    mod = await esmock('../../../src/services/tools/create-bot.ts', {
       '../../../src/services/bot-management-api.js': {
         botManagementApi: mockClient,
         BotManagementApiClient: class {},
@@ -20,12 +21,12 @@ describe('createCreateBotTool', () => {
         logger: { debug: sinon.stub(), error: loggerErrorStub },
       },
     });
-    createCreateBotTool = module.createCreateBotTool;
+    createCreateBotTool = mod.createCreateBotTool;
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   it('returns JSON string with id and name on success', async () => {

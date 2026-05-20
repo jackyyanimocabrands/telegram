@@ -6,6 +6,7 @@ import esmock from 'esmock';
 describe('BotManagementApiClient', () => {
   let BotManagementApiClient: any;
   let fetchStub: sinon.SinonStub;
+  let mod: any;
 
   const FAKE_ENV = {
     BOT_MGMT_API_URL: 'https://bot-mgmt.example.com',
@@ -15,15 +16,15 @@ describe('BotManagementApiClient', () => {
   beforeEach(async () => {
     fetchStub = sinon.stub(globalThis, 'fetch' as any);
 
-    const mod = await esmock('../../src/services/bot-management-api.ts', {
+    mod = await esmock('../../src/services/bot-management-api.ts', {
       '../../src/config/env.js': { env: FAKE_ENV },
     });
     BotManagementApiClient = mod.BotManagementApiClient;
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   // ── createBot ─────────────────────────────────────────────────────────────
@@ -84,10 +85,10 @@ describe('BotManagementApiClient', () => {
     });
 
     it('throws when BOT_MGMT_API_URL or BOT_MGMT_API_KEY is not configured', async () => {
-      const mod = await esmock('../../src/services/bot-management-api.ts', {
+      const unconfiguredMod = await esmock('../../src/services/bot-management-api.ts', {
         '../../src/config/env.js': { env: {} },
       });
-      const UnconfiguredClient = mod.BotManagementApiClient;
+      const UnconfiguredClient = unconfiguredMod.BotManagementApiClient;
       const client = new UnconfiguredClient();
 
       let threw = false;
@@ -98,6 +99,9 @@ describe('BotManagementApiClient', () => {
         expect((err as Error).message).to.include('not configured');
       }
       expect(threw).to.be.true;
+
+      await esmock.purge(unconfiguredMod);
+      mod = undefined;
     });
   });
 

@@ -43,6 +43,7 @@ describe('verify-email route', () => {
 
   let createVerifyEmailRouter: any;
   let app: express.Express;
+  let mod: any;
 
   // Fixed "now" for deterministic TTL comparisons
   const NOW = new Date('2024-01-15T12:00:00.000Z');
@@ -65,7 +66,7 @@ describe('verify-email route', () => {
     queueAddStub = sinon.stub().resolves();
     getNowStub = sinon.stub().returns(NOW);
 
-    const mod = await esmock('../../src/routes/verify-email.ts', {
+    mod = await esmock('../../src/routes/verify-email.ts', {
       '../../src/services/email-verification.js': {
         verifyVerificationToken: verifyVerificationTokenStub,
       },
@@ -104,8 +105,8 @@ describe('verify-email route', () => {
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   // ── 1. Missing token query param → 400 ────────────────────────────────────

@@ -9,6 +9,7 @@ describe('processManagedBotUpdated', () => {
   let getToolsetStateStub: sinon.SinonStub;
   let createBotStub: sinon.SinonStub;
   let loggerStub: { info: sinon.SinonStub; debug: sinon.SinonStub; warn: sinon.SinonStub; error: sinon.SinonStub };
+  let mod: any;
 
   const MANAGER_TOKEN = 'manager-token-abc';
   const MANAGER_BOT_ID = 'manager';
@@ -28,7 +29,7 @@ describe('processManagedBotUpdated', () => {
   });
 
   const loadModule = async () => {
-    const mod = await esmock('../../src/services/managed-bot.ts', {
+    mod = await esmock('../../src/services/managed-bot.ts', {
       '../../src/services/telegram-api.js': {},
       '../../src/db/queries/conversations.js': {
         getToolsetState: getToolsetStateStub,
@@ -57,8 +58,8 @@ describe('processManagedBotUpdated', () => {
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   it('happy path: logs success and does not throw', async () => {

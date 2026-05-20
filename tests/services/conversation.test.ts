@@ -44,24 +44,25 @@ describe('ConversationService', () => {
   let ConversationService: any;
   let upsertConversationStub: sinon.SinonStub;
   let updateConversationMessagesStub: sinon.SinonStub;
+  let mod: any;
 
   beforeEach(async () => {
     upsertConversationStub = sinon.stub().resolves(makeRow());
     updateConversationMessagesStub = sinon.stub().resolves();
 
-    const module = await esmock('../../src/services/conversation.ts', {
+    mod = await esmock('../../src/services/conversation.ts', {
       '../../src/config/llm-config.js': { llmConfig: mockLlmConfig },
       '../../src/db/queries/conversations.js': {
         upsertConversation: upsertConversationStub,
         updateConversationMessages: updateConversationMessagesStub,
       },
     });
-    ConversationService = module.ConversationService;
+    ConversationService = mod.ConversationService;
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.resetHistory();
-    await esmock.purge();
   });
 
   // ── load ─────────────────────────────────────────────────────────────────

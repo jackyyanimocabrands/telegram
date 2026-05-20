@@ -19,17 +19,21 @@ describe('webhook-secret middleware', () => {
 
   afterEach(async () => {
     sinon.restore();
-    await esmock.purge();
   });
 
   // ── Manager webhook secret ────────────────────────────────────────────────
 
   describe('verifyManagerWebhookSecret', () => {
     let verifyManagerWebhookSecret: (req: Request, res: Response, next: NextFunction) => void;
+    let mod: any;
 
     beforeEach(async () => {
-      const mod = await esmock('../../src/middleware/webhook-secret.ts', {});
+      mod = await esmock('../../src/middleware/webhook-secret.ts', {});
       verifyManagerWebhookSecret = mod.verifyManagerWebhookSecret;
+    });
+
+    afterEach(async () => {
+      await esmock.purge(mod);
     });
 
     it('calls next() with no error for correct secret', () => {

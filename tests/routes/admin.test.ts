@@ -13,21 +13,26 @@ describe('admin routes', () => {
   let getConversationTokenUsageStub: sinon.SinonStub;
   let getBotTokenUsageStub: sinon.SinonStub;
   let app: express.Express;
+  let mods: any[];
 
   const setupApp = async () => {
+    mods = [];
     getTokenUsageSummaryStub = sinon.stub().resolves([]);
     getConversationTokenUsageStub = sinon.stub().resolves([]);
     getBotTokenUsageStub = sinon.stub().resolves([]);
 
-    const { adminRouter } = await esmock('../../src/routes/admin.ts', {
+    const adminAuthMod = await esmock('../../src/middleware/admin-auth.ts', {
       '../../src/config/env.js': {
         env: { ADMIN_API_KEY: TEST_ADMIN_KEY },
       },
-      '../../src/middleware/admin-auth.js': await esmock('../../src/middleware/admin-auth.ts', {
-        '../../src/config/env.js': {
-          env: { ADMIN_API_KEY: TEST_ADMIN_KEY },
-        },
-      }),
+    });
+    mods.push(adminAuthMod);
+
+    const adminMod = await esmock('../../src/routes/admin.ts', {
+      '../../src/config/env.js': {
+        env: { ADMIN_API_KEY: TEST_ADMIN_KEY },
+      },
+      '../../src/middleware/admin-auth.js': adminAuthMod,
       '../../src/db/queries/token-usage.js': {
         getTokenUsageSummary: getTokenUsageSummaryStub,
         getConversationTokenUsage: getConversationTokenUsageStub,
@@ -40,10 +45,11 @@ describe('admin routes', () => {
         logger: { error: sinon.stub(), debug: sinon.stub(), warn: sinon.stub(), info: sinon.stub() },
       },
     });
+    mods.push(adminMod);
 
     const a = express();
     a.use(express.json());
-    a.use('/admin', adminRouter);
+    a.use('/admin', adminMod.adminRouter);
     a.use((err: any, _req: any, res: any, _next: any) => {
       res.status(err.statusCode ?? err.status ?? 500).json({ error: err.message });
     });
@@ -55,8 +61,10 @@ describe('admin routes', () => {
   });
 
   afterEach(async () => {
+    for (const m of mods) {
+      await esmock.purge(m);
+    }
     sinon.restore();
-    await esmock.purge();
   });
 
   // ── Auth guard ─────────────────────────────────────────────────────────────

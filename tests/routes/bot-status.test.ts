@@ -54,6 +54,8 @@ describe('bot-status routes', () => {
   let findBotStub: sinon.SinonStub;
   let verifyStub: sinon.SinonStub;
   let app: express.Express;
+  let mod: any;
+  let authMod: any;
 
   beforeEach(async () => {
     findBotStub = sinon.stub().resolves(mockBotRow);
@@ -62,24 +64,27 @@ describe('bot-status routes', () => {
     // so the stub is injected all the way down the import chain.
     verifyStub = sinon.stub().returns(mockUser);
 
-    const module = await esmock('../../src/routes/bot-status.ts', {
+    authMod = await esmock('../../src/middleware/auth.ts', {
+      '../../src/services/session.js': {
+        verifyAccessToken: verifyStub,
+      },
+    });
+
+    mod = await esmock('../../src/routes/bot-status.ts', {
       '../../src/db/queries/managed-bots.js': {
         findManagedBotByOwnerTelegramId: findBotStub,
       },
-      '../../src/middleware/auth.js': await esmock('../../src/middleware/auth.ts', {
-        '../../src/services/session.js': {
-          verifyAccessToken: verifyStub,
-        },
-      }),
+      '../../src/middleware/auth.js': authMod,
     });
 
-    botStatusRouter = module.botStatusRouter;
+    botStatusRouter = mod.botStatusRouter;
     app = buildApp(botStatusRouter);
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
+    await esmock.purge(authMod);
     sinon.restore();
-    await esmock.purge();
   });
 
   describe('GET /api/bots/mine', () => {

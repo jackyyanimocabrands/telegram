@@ -7,6 +7,7 @@ describe('createClearEmailVerificationTool', () => {
   let createClearEmailVerificationTool: any;
   let deleteTokensForUserStub: sinon.SinonStub;
   let updateToolsetStateStub: sinon.SinonStub;
+  let mod: any;
 
   // Mock pg PoolClient
   function makeMockClient(queryOverride?: sinon.SinonStub) {
@@ -27,7 +28,7 @@ describe('createClearEmailVerificationTool', () => {
     deleteTokensForUserStub = sinon.stub().resolves();
     updateToolsetStateStub = sinon.stub().resolves(1);
 
-    const mod = await esmock('../../../src/services/tools/clear-email-verification.ts', {
+    mod = await esmock('../../../src/services/tools/clear-email-verification.ts', {
       '../../../src/db/queries/email-verification-tokens.js': {
         deleteTokensForUser: deleteTokensForUserStub,
       },
@@ -43,8 +44,8 @@ describe('createClearEmailVerificationTool', () => {
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   // ── 1. Happy path ─────────────────────────────────────────────────────────

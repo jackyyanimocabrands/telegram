@@ -9,6 +9,7 @@ describe('createSaveMindContextTool', () => {
   let SAVE_MIND_CONTEXT_ERROR_MSG: string;
   let updateToolsetStateStub: sinon.SinonStub;
   let loggerErrorStub: sinon.SinonStub;
+  let mod: any;
 
   const BOT_ID = 'bot-1';
   const USER_ID = '42';
@@ -22,7 +23,7 @@ describe('createSaveMindContextTool', () => {
     updateToolsetStateStub = sinon.stub().resolves(1);
     loggerErrorStub = sinon.stub();
 
-    const mod = await esmock('../../../src/services/tools/save-mind-context.ts', {
+    mod = await esmock('../../../src/services/tools/save-mind-context.ts', {
       '../../../src/db/queries/conversations.js': {
         updateToolsetState: updateToolsetStateStub,
       },
@@ -43,8 +44,8 @@ describe('createSaveMindContextTool', () => {
   });
 
   afterEach(async () => {
+    await esmock.purge(mod);
     sinon.restore();
-    await esmock.purge();
   });
 
   // ── T1-01: success path calls updateToolsetState with exact args ────────────

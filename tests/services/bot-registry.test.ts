@@ -12,6 +12,7 @@ describe('BotRegistry', () => {
   let setAppStateStub: sinon.SinonStub;
   let savePollingOffsetStub: sinon.SinonStub;
   let findManagedBotByBotIdStub: sinon.SinonStub;
+  let mod: any;
 
   beforeEach(async () => {
     mockTelegram = new MockTelegramClient();
@@ -35,6 +36,7 @@ describe('BotRegistry', () => {
         findManagedBotByBotId: findManagedBotByBotIdStub,
       },
     });
+    mod = module;
     BotRegistry = module.BotRegistry;
   });
 
@@ -43,7 +45,7 @@ describe('BotRegistry', () => {
     // by the esmock module. sinon.restore() would un-stub the functions that
     // esmock captured by reference, breaking subsequent tests in the same file.
     sinon.resetHistory();
-    await esmock.purge();
+    await esmock.purge(mod);
   });
 
   describe('registerBot', () => {
